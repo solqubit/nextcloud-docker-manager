@@ -28,6 +28,16 @@ class Catalog:
         time.sleep(0.35)
         return ['35.0.2', '34.0.5', '33.0.10']
 
+    def support_status(self, version):
+        expired = version.startswith('32.')
+        return dict(version=version, major=int(version.split('.')[0]), state='eol' if expired else 'supported',
+                    obsolete=expired, support_until='2026-09-30' if expired else '2099-09-15',
+                    precision='day', checked='2026-10-27T00:00:00+00:00', stale=False)
+
+    def installation_options(self):
+        return [dict(self.support_status(version), recommendation='latest' if n == 0 else 'previous')
+                for n, version in enumerate(self.branches()[:2])]
+
 
 class FixtureManager:
     def __init__(self, state, require_db=False):
@@ -43,6 +53,7 @@ class FixtureManager:
                 'access': [dict(entry, url='http://' + entry['host'] + ':' + str(cfg['http_port'])) for entry in cfg['domains']],
                 'status': {'installed': cfg['status'] == 'ready', 'maintenance': False, 'needsDbUpgrade': False},
                 'operation': self.state.pending,
+                'support': self.catalog.support_status(cfg['version']),
                 'services': [dict(Service=role, State='running', Health='healthy', Ports='8080->80/tcp' if role == 'proxy' else '')
                              for role in ('app', 'db', 'redis', 'proxy', 'cron')]}
 
@@ -220,7 +231,8 @@ def main():
     state = State(sys.argv[1]).open()
     mode = sys.argv[2]
     if mode not in ('empty', 'empty-english'):
-        cfg = initial('33.0.10', images(), storage='named', language='en' if mode == 'english' else 'es')
+        version = '32.0.15' if mode == 'obsolete' else '33.0.10'
+        cfg = initial(version, images(version), storage='named', language='en' if mode == 'english' else 'es')
         cfg['status'] = 'ready'
         state.activate(state.revision(cfg))
         make_backup(state)

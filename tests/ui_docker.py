@@ -37,11 +37,10 @@ def main():
                 and not (item['Config'].get('Labels') or {}).get('com.solqubit.ndm.test')]
     active, opened = None, None
     try:
-        versions = Catalog(ROOT / 'catalog-cache').branches()
-        target = versions[0]
+        target = Catalog(ROOT / 'catalog-cache').installation_options()[0]['version']
         active = launch()
         active.send(b'\r', 'Entorno de instalación')
-        active.send(b'\x1bOB\r', 'Versiones estables oficiales')
+        active.send(b'\x1bOB\r', 'mantenimiento oficial')
         active.send(b'\r', 'Configuración inicial')
         for index, value in ((4, b'18880'), (5, b'18443')):
             active.select(index, 'entre 1 y 65535')

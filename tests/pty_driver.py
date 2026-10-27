@@ -33,7 +33,7 @@ class Driver:
     def read(self, seconds=0.08):
         until = time.monotonic() + seconds
         while time.monotonic() < until:
-            if select.select([self.master], [], [], min(0.03, until - time.monotonic()))[0]:
+            if select.select([self.master], [], [], min(0.03, max(0, until - time.monotonic())))[0]:
                 try:
                     chunk = os.read(self.master, 65536)
                 except OSError:

@@ -41,7 +41,7 @@ class WorkflowTests(unittest.TestCase):
 
     def wizard(self, ui):
         ui.send(b'\r', 'Entorno de instalación')
-        ui.send(b'\x1bOB\r', 'Versiones estables oficiales')
+        ui.send(b'\x1bOB\r', 'mantenimiento oficial')
         ui.capture('01-version-picker')
         ui.send(b'\r', 'Configuración inicial')
 
@@ -309,7 +309,7 @@ class WorkflowTests(unittest.TestCase):
     def test_english_wizard_and_named_storage_hide_unused_folder(self):
         ui = self.launch('empty-english')
         ui.send(b'\r', 'Installation environment')
-        ui.send(b'\x1bOB\r', 'Official stable releases')
+        ui.send(b'\x1bOB\r', 'officially maintained')
         ui.send(b'\r', 'Initial configuration')
         ui.select(7, 'Storage')
         ui.send(b'\x1bOB\r', 'updated in the form')
@@ -349,6 +349,28 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('31-expanded-dashboard')
         ui.send(b'\r', '¿Detener los servicios?')
         ui.send(b'\x1b', 'Administrar Nextcloud')
+        self.assertEqual(self.calls(ui), [])
+
+    def test_fresh_install_shows_recommended_and_previous_with_support_dates(self):
+        ui = self.launch('empty')
+        ui.send(b'\r', 'Entorno de instalación')
+        ui.send(b'\r', 'mantenimiento oficial')
+        shown = '\n'.join(ui.screen.display)
+        self.assertIn('35.0.2', shown)
+        self.assertIn('Recomendada', shown)
+        self.assertIn('34.0.5', shown)
+        self.assertIn('Anterior', shown)
+        self.assertNotIn('33.0.10', shown)
+        self.assertNotIn('32.0.15', shown)
+        ui.capture('32-supported-versions')
+
+    def test_obsolete_installation_is_marked_on_dashboard_and_status(self):
+        ui = self.launch('obsolete')
+        self.assertIn('OBSOLETA: Nextcloud 32', '\n'.join(ui.screen.display))
+        ui.capture('33-obsolete-dashboard')
+        self.root(ui, 'status', 'OBSOLETA')
+        self.assertIn('sin mantenimiento', '\n'.join(ui.screen.display))
+        ui.capture('34-obsolete-status')
         self.assertEqual(self.calls(ui), [])
 
 

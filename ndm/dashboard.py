@@ -2,6 +2,7 @@
 from .config import access_url
 from .console import BANNER
 from .terminal_ui import curses
+from .views import support_summary
 
 
 GROUPS = [
@@ -57,11 +58,19 @@ def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=No
                  else 'service_unavailable')
         summary = ui.t(label) + ' · ' + access_url(cfg) + ' · ' + ui.t('environment_' + cfg['environment'])
         tone = 'warning' if label != 'service_ready' or pending else 'accent'
+        support = (status or {}).get('support', {})
+        if support.get('state', 'unknown') != 'supported' or support.get('stale'):
+            support_text, support_tone = support_summary(ui, support)
+            summary = support_text + ' · ' + access_url(cfg)
+            tone = 'warning' if support_tone == 'ok' else support_tone
     else:
         ui.context = str(state.path)
         summary, tone = ui.t('install_intro'), 'accent'
     if pending:
         summary, tone = ui.t('pending'), 'warning'
+        if (status or {}).get('support', {}).get('obsolete'):
+            summary = support_summary(ui, status['support'])[0] + ' · ' + summary
+            tone = 'error'
     if ui.screen is None:
         ui.width = 76
         cells, _, _ = layout(ui, pending, configured)

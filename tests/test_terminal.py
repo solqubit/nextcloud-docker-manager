@@ -14,6 +14,17 @@ from ndm.i18n import messages
 
 
 class TerminalTests(unittest.TestCase):
+    def test_pty_read_deadline_cannot_pass_a_negative_select_timeout(self):
+        from unittest.mock import patch
+        from pty_driver import Driver
+        driver = object.__new__(Driver)
+        driver.master = 0
+        # Simulate the process being descheduled between the loop and select.
+        with patch('pty_driver.time.monotonic', side_effect=[0, 0.01, 1, 1]), patch(
+                'pty_driver.select.select', return_value=([], [], [])) as select_call:
+            driver.read()
+        self.assertEqual(select_call.call_args.args[-1], 0)
+
     def pty_run(self, expression, keys):
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))

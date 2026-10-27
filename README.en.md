@@ -16,7 +16,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh --lang en
 ```
 
-1. Choose local server or VPS, version, IP, ports and data directory.
+1. Choose local server or VPS, version, IP, ports and data directory. The latest and previous officially maintained majors are offered.
 2. Open the displayed local URL and create the administrator in the web installer.
 3. Select **Check web installation** in the manager.
 4. Add a domain when you want external access.
@@ -63,7 +63,7 @@ Backups contain SQL, application state and certificates. **They exclude `data/<i
 - **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
 - **MariaDB:** keeps `11.4.x`. Changing LTS is allowed only when required by the target Nextcloud.
 - **Redis and Caddy:** independent updates.
-- **Maintenance:** checks services, cron, certificates, space, available updates and backups. Daily scheduling does not apply updates.
+- **Maintenance:** checks services, cron, certificates, space, official support, updates and backups. Warns near end of support and marks expired branches as obsolete. Daily scheduling does not apply updates.
 
 Before updating, the manager enables maintenance, backs up SQL/application state, and rehearses the change with actual SQL in isolated containers without documents. This takes time and free Docker storage.
 

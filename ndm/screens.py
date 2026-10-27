@@ -19,7 +19,7 @@ from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
 from .system import host_info
 from .terminal_ui import SEPARATOR, Terminal
-from .views import SERVICES, backup_rows, pair, result_rows
+from .views import SERVICES, backup_rows, pair, release_rows, result_rows, support_summary
 
 
 def folder(value):
@@ -31,10 +31,11 @@ def folder(value):
 
 class Form:
     """In-memory drafts. Escape never writes configuration or changes services."""
-    def __init__(self, console, title, data, fields, *, installed=False, versions=()):
+    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=()):
         self.view, self.ui, self.title = console, console.term, title
         self.data, self.original = copy.deepcopy(data), copy.deepcopy(data)
         self._fields, self.installed, self.versions = fields, installed, versions
+        self.releases = releases
         self.selected, self.invalid = 0, ''
         self.notice, self.notice_style = self.ui.t('form_intro'), 'accent'
         self.reviewing = False
@@ -131,7 +132,8 @@ class Form:
                                         for v in values], selected=values.index(data[key]),
                                    help_text=self.ui.t('environment_help') if key == 'environment' else '')
         elif key == 'version':
-            value = self.view.pick(key, [(v, 'Nextcloud ' + v, '') for v in self.versions],
+            value = self.view.pick(key, release_rows(self.ui, self.releases) if self.releases else
+                                   [(v, 'Nextcloud ' + v, '') for v in self.versions],
                                    selected=self.versions.index(data[key]))
         elif key == 'timezone':
             value = self.timezone()
@@ -228,9 +230,11 @@ class Controller:
         return self.view.pick(title, [(key, self.term.t(key), '') for key in keys], **kwargs)
 
     def report(self, action, data=None, *, notice='', style='ok'):
-        if isinstance(data, dict) and data.get('errors'):
+        if isinstance(data, dict) and (data.get('errors') or data.get('warnings')):
             style = 'warning'
             notice = self.term.t('checks_warning')
+        if isinstance(data, dict) and data.get('support', {}).get('state') in ('eol', 'ending', 'unknown'):
+            notice, style = support_summary(self.term, data['support'])
         rows = result_rows(self.term, action, data, self.state)
         if action in ('install', 'setup') and self.state.configured:
             cfg = self.state.load()
@@ -271,8 +275,9 @@ class Controller:
         environment = self.pick('environment', ('lan', 'vps'), help_text=self.term.t('environment_help'))
         if environment is None:
             return
-        versions = self.view.run('lookup_versions', self.manager.catalog.branches)
-        version = self.view.pick('version', [(v, 'Nextcloud ' + v, '') for v in versions],
+        releases = self.view.run('lookup_versions', self.manager.catalog.installation_options)
+        versions = [release['version'] for release in releases]
+        version = self.view.pick('version', release_rows(self.term, releases),
                                  notice=self.term.t('version_help'))
         if version is None:
             return
@@ -280,7 +285,7 @@ class Controller:
         address = info['address'] if environment == 'lan' else '127.0.0.1'
         data = dict(version=version, environment=environment, bind=address, address=address, http_port=8080,
                     https_port=8443, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
-        form = Form(self.view, 'configure', data, tuple(data), versions=versions)
+        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases)
         if info['panel_detected']:
             form.notice, form.notice_style = self.term.t('ports_existing'), 'warning'
         while True:

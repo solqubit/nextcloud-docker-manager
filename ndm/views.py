@@ -12,6 +12,44 @@ SERVICES = {'app': 'Nextcloud', 'db': 'MariaDB', 'redis': 'Redis',
             'proxy': 'Caddy / HTTPS', 'cron': 'Cron'}
 
 
+def support_summary(ui, support):
+    state = support.get('state', 'unknown')
+    until = support.get('support_until', '')
+    date = until[:7] if support.get('precision') == 'month' else until
+    if state == 'eol':
+        return ui.t('support_eol', support.get('major', '?')), 'error'
+    if state == 'ending':
+        return ui.t('support_ending', date), 'warning'
+    if state == 'supported':
+        return ui.t('support_active', date), 'ok'
+    return ui.t('support_unknown'), 'warning'
+
+
+def support_rows(ui, support):
+    if not support:
+        return []
+    text, tone = support_summary(ui, support)
+    rows = pair(ui, 'support', text, tone)
+    if support.get('support_until'):
+        date = support['support_until'][:7] if support.get('precision') == 'month' else support['support_until']
+        rows += pair(ui, 'support_until', date, tone)
+    if support.get('stale'):
+        rows += [(ui.t('support_cached'), 'warning')]
+    if support.get('checked'):
+        rows += pair(ui, 'support_checked', support['checked'], 'dim')
+    return rows
+
+
+def release_rows(ui, releases):
+    result = []
+    for release in releases:
+        version = release['version']
+        until = release['support_until'][:7] if release.get('precision') == 'month' else release['support_until']
+        label = f'Nextcloud {version} · {ui.t("release_" + release["recommendation"])} · {ui.t("release_until", until)}'
+        result.append((version, label, 'ok' if release['recommendation'] == 'latest' else 'accent'))
+    return result
+
+
 def pair(ui, label, value, tone='accent', width=76):
     """Aligned dim labels and colored values, wrapping paths rather than hiding them."""
     label = ui.msg.get('label_' + label, ui.t(label))
@@ -27,7 +65,7 @@ def section(ui, name):
 
 
 def status_rows(ui, data, cfg):
-    rows = []
+    rows = support_rows(ui, data.get('support'))
     for entry in data.get('access', []):
         rows += pair(ui, 'access_' + entry.get('kind', 'local'), entry.get('url', entry.get('host', '')))
     state = data.get('status', {})
@@ -95,7 +133,7 @@ def result_rows(ui, action, result, state):
         rows = []
         if isinstance(value, dict):
             for key, item in value.items():
-                if key in blocked or any(word in key.casefold() for word in ('password', 'secret', 'token')):
+                if key in blocked or key == 'support' or any(word in key.casefold() for word in ('password', 'secret', 'token')):
                     continue
                 if key == 'services':
                     continue
@@ -117,7 +155,8 @@ def result_rows(ui, action, result, state):
         else:
             rows += [(clean(value), '')]
         return rows
-    return expand(result) or [(ui.t('operation_done'), 'ok')]
+    rows = support_rows(ui, result.get('support')) if isinstance(result, dict) else []
+    return rows + expand(result) or [(ui.t('operation_done'), 'ok')]
 
 
 def backup_rows(ui, paths):

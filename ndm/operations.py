@@ -43,8 +43,9 @@ class Manager(Maintenance, DatabaseMigration):
         if self.state.configured:
             raise Error('Ya existe una instalación; usa el menú / Installation already configured')
         with stage('Consultar imágenes oficiales / Resolve official images'):
-            version = version or self.catalog.branches()[0]
+            version = version or self.catalog.installation_options()[0]['version']
             version_tuple(version)
+            self.catalog.require_supported(version)
             images = {'app': self.catalog.resolve('nextcloud', version + '-apache')}
             if database_series not in self.catalog.maintained_databases()['branches']:
                 raise Error('Selected MariaDB LTS is not under Community maintenance')
@@ -104,7 +105,7 @@ class Manager(Maintenance, DatabaseMigration):
         return {'version': engine.cfg['version'], 'environment': engine.cfg['environment'],
                 'access': [dict(e, url=access_url(engine.cfg, e)) for e in engine.cfg['domains']],
                 'status': engine.status(), 'operation': self.state.pending,
-                'services': services}
+                'services': services, 'support': self.catalog.support_status(engine.cfg['version'])}
 
     def ready(self):
         if self.state.pending:
@@ -278,8 +279,11 @@ class Manager(Maintenance, DatabaseMigration):
             latest = self.catalog.latest(repo, '.'.join(installed.split('.')[:2]))
             components[role] = {'current': installed, 'available': latest,
                                 'image_changed': cfg['images'][role] != self.catalog.resolve(repo, latest)}
-        return {'current': cfg['version'], 'patches': patches, 'next_major': next_major,
-                'refreshed_image': ref != cfg['images']['app'], 'branches': branches, 'components': components}
+        return {'current': cfg['version'], 'support': self.catalog.support_status(cfg['version']),
+                'patches': patches, 'next_major': next_major,
+                'refreshed_image': ref != cfg['images']['app'],
+                'branches': [v for v in branches if self.catalog.support_status(v)['state'] in ('supported', 'ending')],
+                'components': components}
 
     def rehearse(self, path, target, app_image=None, db_image=None, components=None):
         """Actual SQL + application clone, excluding all user files and external networking."""

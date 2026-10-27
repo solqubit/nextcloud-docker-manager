@@ -16,7 +16,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh
 ```
 
-1. Elige servidor local o VPS, versión, IP, puertos y carpeta de datos.
+1. Elige servidor local o VPS, versión, IP, puertos y carpeta de datos. Se ofrecen la última rama y la anterior con soporte oficial.
 2. Abre la URL local indicada y crea el administrador en la web de Nextcloud.
 3. Selecciona **Comprobar instalación web** en el gestor.
 4. Añade un dominio cuando quieras acceso externo.
@@ -63,7 +63,7 @@ Los respaldos guardan SQL, aplicación y certificados. **Excluyen `data/<id>/dat
 - **Nextcloud:** parches dentro de la misma rama; versiones mayores consecutivas, empezando por el último parche de la actual.
 - **MariaDB:** conserva `11.4.x`. Solo permite cambiar de LTS si el Nextcloud objetivo lo exige.
 - **Redis y Caddy:** actualizaciones independientes.
-- **Mantenimiento:** comprueba servicios, cron, certificados, espacio, actualizaciones disponibles y respaldos. La programación diaria no aplica actualizaciones.
+- **Mantenimiento:** comprueba servicios, cron, certificados, espacio, soporte oficial, actualizaciones y respaldos. Avisa al acercarse el fin de soporte y marca la rama como obsoleta cuando termina. La programación diaria no aplica actualizaciones.
 
 Antes de actualizar se activa mantenimiento, se respalda SQL/aplicación y se ensaya el cambio con SQL real en contenedores aislados, sin documentos. Requiere tiempo y espacio en Docker.
 

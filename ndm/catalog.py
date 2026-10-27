@@ -12,12 +12,13 @@ import urllib.error
 import urllib.request
 
 from .core import Error, atomic, read_json, version_tuple
+from .lifecycle import SCHEDULE_RAW, SCHEDULE_URL, parse_schedule, support_status
 
 
-def fetch(url, headers=None):
+def fetch(url, headers=None, timeout=40):
     request = urllib.request.Request(url, headers={'User-Agent': 'Nextcloud-Docker-Manager/0.1', **(headers or {})})
     try:
-        with urllib.request.urlopen(request, timeout=40) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
     except (OSError, urllib.error.URLError) as exc:
         raise Error(f'No se pudo consultar / Cannot retrieve: {url.split("?")[0]}') from exc
@@ -62,11 +63,72 @@ class Catalog:
         atomic(path, value)
         return value
 
-    def branches(self):
-        value = self.get('branches', 'https://raw.githubusercontent.com/nextcloud/docker/master/versions.json')
+    def branches(self, *, refresh=False):
+        """Available stable images, including older migration intermediates."""
+        value = self.get('branches', 'https://raw.githubusercontent.com/nextcloud/docker/master/versions.json',
+                         ttl=0 if refresh else 900)
         return sorted([v['version'] for v in value.values()
                        if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', v.get('version', ''))
                        and 'apache' in v.get('variants', {})], key=version_tuple, reverse=True)
+
+    def nextcloud_support(self, *, refresh=False):
+        path = self.cache / 'nextcloud-support.json'
+        cached = None
+        try:
+            if path.exists():
+                candidate = read_json(path)
+                if candidate.get('source') == SCHEDULE_URL and candidate.get('branches') and candidate.get('checked'):
+                    for major, row in candidate['branches'].items():
+                        if version_tuple(row['current'])[0] != int(major):
+                            raise ValueError('Invalid support cache version')
+                        dt.date.fromisoformat(row['released'])
+                        dt.date.fromisoformat(row['support_until'])
+                        if row['precision'] not in ('day', 'month') or not isinstance(row['upstream_eol'], bool):
+                            raise ValueError('Invalid support cache')
+                    cached = candidate
+                    if not refresh and time.time() - path.stat().st_mtime < 86400:
+                        return dict(cached, stale=False)
+        except (Error, OSError, ValueError, TypeError, KeyError, AttributeError):
+            cached = None
+        try:
+            branches = parse_schedule(fetch(SCHEDULE_RAW, timeout=5).decode('utf-8'))
+            value = dict(source=SCHEDULE_URL, checked=dt.datetime.now(dt.timezone.utc).isoformat(), branches=branches)
+            atomic(path, value)
+            return dict(value, stale=False)
+        except (Error, OSError, ValueError, UnicodeError) as exc:
+            return dict(cached or {'source': SCHEDULE_URL, 'branches': {}, 'checked': None},
+                        stale=True, error=str(exc))
+
+    def support_status(self, version, *, refresh=False):
+        return support_status(version, self.nextcloud_support(refresh=refresh))
+
+    def require_supported(self, version):
+        policy = self.nextcloud_support(refresh=True)
+        status = support_status(version, policy)
+        if policy['stale'] or status['state'] == 'unknown':
+            raise Error('No se pudo verificar el soporte oficial / Cannot verify official Nextcloud support')
+        if status['obsolete']:
+            raise Error('Versión de Nextcloud sin mantenimiento; elige una vigente / Nextcloud is end of life; choose a maintained release')
+        return status
+
+    def installation_options(self):
+        """Recommend only the latest two maintained majors with official images."""
+        policy = self.nextcloud_support(refresh=True)
+        if policy['stale']:
+            raise Error('No se pudo verificar el calendario; vuelve a intentarlo / Cannot verify the release calendar; retry later')
+        choices, seen = [], set()
+        for version in self.branches(refresh=True):
+            status = support_status(version, policy)
+            if status['state'] not in ('supported', 'ending') or status['major'] in seen:
+                continue
+            status['recommendation'] = 'latest' if not choices else 'previous'
+            choices.append(status)
+            seen.add(status['major'])
+            if len(choices) == 2:
+                break
+        if not choices:
+            raise Error('No hay imágenes de Nextcloud con mantenimiento / No maintained Nextcloud images available')
+        return choices
 
     def patches(self, major):
         url = f'https://hub.docker.com/v2/repositories/library/nextcloud/tags?page_size=100&name={int(major)}.'

@@ -45,9 +45,18 @@ class Maintenance:
         return {'component': component, 'version': tag, 'backup': str(path)}
 
     def maintenance(self):
-        result = {'checked': dt.datetime.now(dt.timezone.utc).isoformat(), 'errors': []}
+        result = {'checked': dt.datetime.now(dt.timezone.utc).isoformat(), 'errors': [], 'warnings': []}
         engine = Engine(self.state)
         result['status'] = engine.status()
+        result['support'] = self.catalog.support_status(engine.cfg['version'])
+        if result['support']['obsolete']:
+            result['errors'].append('Nextcloud is end of life; plan a sequential upgrade')
+        elif result['support']['state'] == 'unknown':
+            result['errors'].append('Nextcloud support could not be verified')
+        elif result['support']['state'] == 'ending':
+            result['warnings'].append('Nextcloud maintenance ends soon: ' + result['support']['support_until'])
+        if result['support']['stale']:
+            result['warnings'].append('Release calendar unavailable; using saved official dates')
         if self.state.pending:
             result['errors'].append('Pending operation requires recovery')
         elif result['status'].get('installed'):
