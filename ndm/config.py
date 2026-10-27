@@ -77,6 +77,11 @@ def validate(cfg):
         raise Error('Invalid private network')
     if cfg['language'] not in ('es', 'en') or not isinstance(cfg['maintenance_gate'], bool):
         raise Error('Invalid language/state')
+    if 'db_redo_log_size' in cfg and (type(cfg['db_redo_log_size']) is not int
+                                    or not 128 * 1024 ** 2 <= cfg['db_redo_log_size'] <= 1024 ** 3):
+        raise Error('Invalid MariaDB redo log size')
+    if 'initial_maintenance_pending' in cfg and type(cfg['initial_maintenance_pending']) is not bool:
+        raise Error('Invalid initial maintenance state')
     for name in ('app', 'db', 'data', 'proxy_data', 'proxy_config'):
         if not re.fullmatch(r'ndm_[a-f0-9]{16}_[a-z0-9_]+', cfg['volumes'][name]):
             raise Error('Invalid volume identity')
@@ -120,7 +125,8 @@ def initial(version, images, *, environment='lan', bind='127.0.0.1', address=Non
                redis_password=secrets.token_urlsafe(30), maintenance_gate=False,
                primary=host(address or bind),
                domains=[dict(host=host(address or bind), kind='local', tls='off', mode='local', email='')],
-               status='awaiting-web', retention=3, data_device=None)
+               status='awaiting-web', retention=3, data_device=None,
+               db_redo_log_size=256 * 1024 ** 2, initial_maintenance_pending=True)
     validate(cfg)
     return cfg
 
@@ -141,7 +147,7 @@ def managed_php(cfg, *, rehearsal=False):
             'overwritecondaddr': '', 'memcache.local': '\\OC\\Memcache\\APCu',
             'memcache.locking': '\\OC\\Memcache\\Redis',
             'redis': {'host': 'redis', 'port': 6379, 'password': cfg['redis_password']},
-            'log_type': 'file', 'logfile': '/var/www/html/nextcloud.log',
+            'log_type': 'file', 'logfile': '/var/www/html/data/nextcloud.log',
             'log_rotate_size': 20 * 1024 * 1024, 'maintenance_window_start': 6,
             'default_phone_region': 'EC'}
     if rehearsal:
@@ -150,10 +156,11 @@ def managed_php(cfg, *, rehearsal=False):
     return "<?php\n// Managed by Nextcloud Docker Manager. Edit access through the manager.\n$CONFIG = json_decode(base64_decode('" + encoded + "'), true);\n"
 
 
-def _proxy_route(scheme, gate):
+def _proxy_route(scheme, gate, *, hsts=False):
+    headers = ['header Strict-Transport-Security "max-age=15552000"'] if hsts else []
     if gate:
-        return ['respond "Nextcloud maintenance" 503']
-    return ['redir /.well-known/carddav /remote.php/dav/ 301',
+        return headers + ['respond "Nextcloud maintenance" 503']
+    return headers + ['redir /.well-known/carddav /remote.php/dav/ 301',
             'redir /.well-known/caldav /remote.php/dav/ 301',
             'redir /.well-known/webfinger /index.php{uri} 301',
             'redir /.well-known/nodeinfo /index.php{uri} 301',
@@ -173,7 +180,8 @@ def caddyfile(cfg):
             lines += [f'        redir https://{entry["host"]}{suffix}{{uri}} 308']
         else:
             scheme = 'https' if entry['kind'] == 'public' else 'http'
-            lines += ['        ' + line for line in _proxy_route(scheme, cfg['maintenance_gate'])]
+            lines += ['        ' + line for line in _proxy_route(scheme, cfg['maintenance_gate'],
+                                                                hsts=entry['kind'] == 'public')]
         lines += ['    }']
     lines += ['    respond "Unknown host" 404', '}']
     for entry in cfg['domains']:
@@ -190,7 +198,8 @@ def caddyfile(cfg):
             lines += ['        }', '    }']
         lines += ['    handle /.well-known/acme-challenge/* {',
                   '        reverse_proxy 127.0.0.1:80', '    }', '    handle {']
-        lines += ['        ' + line for line in _proxy_route('https', cfg['maintenance_gate'])]
+        lines += ['        ' + line for line in _proxy_route('https', cfg['maintenance_gate'],
+                                                            hsts=entry['kind'] == 'public')]
         lines += ['    }', '}']
     return '\n'.join(lines) + '\n'
 
@@ -210,7 +219,9 @@ def compose(cfg):
         'db': {'image': cfg['images']['db'], 'environment': {
             'MARIADB_ROOT_PASSWORD': cfg['root_password'], 'MARIADB_ROOT_HOST': 'localhost', 'MARIADB_AUTO_UPGRADE': '1',
             'MARIADB_DATABASE': 'nextcloud', 'MARIADB_USER': 'nextcloud', 'MARIADB_PASSWORD': cfg['db_password']},
-            'command': ['--transaction-isolation=READ-COMMITTED', '--binlog-format=ROW', '--skip-log-bin'],
+            'command': ['--transaction-isolation=READ-COMMITTED', '--binlog-format=ROW', '--skip-log-bin']
+                       + (['--innodb-log-file-size=' + str(cfg['db_redo_log_size'])]
+                          if 'db_redo_log_size' in cfg else []),
             'volumes': ['db:/var/lib/mysql'], 'networks': ['backend'],
             'healthcheck': {'test': ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized'],
                             'interval': '5s', 'timeout': '5s', 'retries': 60, 'start_period': '30s'}},

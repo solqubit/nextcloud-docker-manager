@@ -123,10 +123,17 @@ class Engine:
                   'cat > /var/www/html/config/.ndm-new; '
                   'chown www-data:www-data /var/www/html/config /var/www/html/config/.ndm-new; '
                   'chmod 640 /var/www/html/config/.ndm-new; '
-                  'mv /var/www/html/config/.ndm-new /var/www/html/config/zz-ndm.config.php')
-        self.runner.run(['docker', 'run', '--rm', '-i', '--network', 'none', '--entrypoint', '/bin/sh',
+                  'mv /var/www/html/config/.ndm-new /var/www/html/config/zz-ndm.config.php; '
+                  'moved=0; for name in nextcloud.log nextcloud.log.1; do '
+                  'old="/var/www/html/$name"; '
+                  'if [ -f "$old" ] && [ ! -L "$old" ]; then '
+                  'saved=$(mktemp "/var/www/html/config/ndm-legacy-$name.XXXXXX"); '
+                  'mv "$old" "$saved"; chmod 640 "$saved"; moved=$((moved + 1)); '
+                  'fi; done; printf "%s" "$moved"')
+        result = self.runner.run(['docker', 'run', '--rm', '-i', '--network', 'none', '--entrypoint', '/bin/sh',
                          '--mount', 'type=volume,src=' + self.cfg['volumes']['app'] + ',dst=/var/www/html',
                          self.cfg['images']['app'], '-ec', script], input=managed_php(self.cfg, rehearsal=rehearsal))
+        return int(result.stdout.strip() or '0')
 
     def up(self, *services):
         self.check_mount()

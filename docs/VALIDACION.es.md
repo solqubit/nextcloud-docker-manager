@@ -4,11 +4,12 @@
 
 | Área | Resultado |
 |---|---|
-| Pruebas pequeñas | 95 casos: interfaz, confirmación de instalación, puertos, idioma, respaldos, requisitos y calendario de soporte |
+| Pruebas pequeñas | 103 casos: interfaz, instalación, puertos, idioma, respaldos, soporte y ajustes iniciales sin reparaciones masivas |
 | Interfaz completa | Recorridos por teclado y capturas de terminal; instalación, verificación y restauración reales de Nextcloud 35.0.2 desde el asistente |
 | Instalación | Creación del administrador desde la web; instalación de Nextcloud 35.0.2 comprobada |
 | Acceso | WebDAV PUT/GET/PROPFIND, comparticiones, dominios permitidos, HTTP y HTTPS local simultáneos |
 | Certificados y rutas | Certificado local verificado, login v2, CardDAV/CalDAV y consulta de WebFinger |
+| Configuración inicial | InnoDB con 256 MiB de registro, índices y MIME iniciales; error de integridad por log reproducido y corregido conservando los registros |
 | Actualizaciones | Nextcloud `33.0.9 → 33.0.10 → 34.0.5`; MariaDB `11.4.12 → 11.4.13` por separado |
 | Respaldos | SQL, aplicación y certificados; tamaños, SHA-256 y gzip verificados; documentos excluidos |
 | Restauración | SQL/aplicación en volúmenes nuevos; documentos y comparticiones conservados |

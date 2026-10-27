@@ -92,6 +92,23 @@ class Manager(Maintenance, DatabaseMigration):
             raise Error('Use recover before completing an interrupted operation')
         engine.verify(configure_cron=True)
         cfg = engine.cfg
+        moved_logs = engine.put_managed()
+        first_setup = cfg['status'] == 'awaiting-web' and cfg.get('initial_maintenance_pending', False)
+        if first_setup:
+            # Only newly created manager installations qualify. An existing
+            # database is never silently sent through expensive repairs.
+            if engine.db_size() <= 64 * 1024 ** 2:
+                with stage('Completar índices y tipos MIME iniciales / Complete initial indices and MIME types'):
+                    engine.occ('db:add-missing-indices')
+                    engine.occ('maintenance:repair', '--include-expensive')
+                cfg['initial_maintenance_pending'] = False
+                status = engine.verify(configure_cron=True)
+            else:
+                status['initial_maintenance_deferred'] = True
+        if first_setup or moved_logs:
+            with stage('Comprobar integridad del código / Check code integrity'):
+                integrity = engine.occ('integrity:check-core', check=False)
+            status['core_integrity_ok'] = integrity.returncode == 0
         cfg['status'] = 'ready'
         self.state.activate(self.state.revision(cfg))
         engine.up('cron')

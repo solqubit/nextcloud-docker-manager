@@ -18,7 +18,7 @@ sudo bash start.sh --lang en
 
 1. Choose local server or VPS, version, IP, ports and data directory. The latest and previous officially maintained majors are offered. The default ports are 80/443.
 2. Open the displayed local URL and create the administrator in the web installer.
-3. Select **Check web installation** in the manager.
+3. Select **Check web installation**. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
 4. Add a domain when you want external access.
 
 On a VPS, first open the private installer through SSH:

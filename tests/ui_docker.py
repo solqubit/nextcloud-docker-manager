@@ -65,6 +65,7 @@ def main():
         assert not Engine(opened).status()['installed']
         suite = Suite(opened)
         suite.prepare()
+        suite.logging_health()
         opened.lock_file.close()
         opened = None
         print('[PASS] Real terminal installer, exact official images, local web setup and authenticated WebDAV')

@@ -88,6 +88,36 @@ class Suite:
             'printf "NDM_USER_DATA_EXCLUSION_SENTINEL\\n" > /var/www/html/data/.ndm-exclusion-fixture')
         print('[PASS] Web-admin setup, authenticated WebDAV PUT/GET/PROPFIND and public-share metadata')
 
+    def logging_health(self):
+        """Reproduce EXTRA_FILE, preserve both old logs, and keep integrity enabled."""
+        assert self.engine.sql('SELECT @@innodb_log_file_size;').stdout.strip() == '268435456'
+        assert self.engine.occ('config:system:get', 'logfile').stdout.strip() == '/var/www/html/data/nextcloud.log'
+        self.engine.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-r',
+            'file_put_contents("/var/www/html/nextcloud.log", "NDM_LEGACY_ROOT_LOG");'
+            'file_put_contents("/var/www/html/nextcloud.log.1", "NDM_LEGACY_ROTATED_LOG");')
+        before = self.engine.occ('integrity:check-core', check=False)
+        assert before.returncode != 0 and 'EXTRA_FILE' in before.stdout and 'nextcloud.log' in before.stdout
+        result = self.manager.setup_check()
+        assert result['core_integrity_ok']
+        check = self.engine.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-r',
+            '$found=[]; foreach(glob("/var/www/html/config/ndm-legacy-nextcloud.log*") as $file) {'
+            '$found[]=file_get_contents($file); }'
+            'echo json_encode(["logs"=>$found,"root_exists"=>file_exists("/var/www/html/nextcloud.log")]);')
+        saved = json.loads(check.stdout)
+        assert not saved['root_exists']
+        assert {'NDM_LEGACY_ROOT_LOG', 'NDM_LEGACY_ROTATED_LOG'} <= set(saved['logs'])
+        self.engine.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-r',
+            'require "/var/www/html/lib/base.php";'
+            '\\OCP\\Server::get(\\Psr\\Log\\LoggerInterface::class)->warning("NDM_ACTIVE_LOG_PROBE");')
+        self.engine.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-r',
+            'exit(str_contains(file_get_contents("/var/www/html/data/nextcloud.log"), "NDM_ACTIVE_LOG_PROBE") ? 0 : 1);')
+        for mode in ('direct', 'tunnel'):
+            proposed = copy.deepcopy(self.state.load())
+            proposed['domains'].append(dict(host='ndm-fixture.example.com', kind='public',
+                                             tls='acme', mode=mode, email=''))
+            Engine(self.state, proposed).validate()
+        print('[PASS] InnoDB redo 256 MiB, reproduced EXTRA_FILE, legacy logs preserved, integrity clean and active log in data')
+
     def domains(self):
         if not any(e['host'] == 'nube.test' for e in self.state.load()['domains']):
             self.manager.add_domain('nube.test', supplied='APPLY')

@@ -240,6 +240,10 @@ class Controller:
             notice = self.term.t('checks_warning')
         if isinstance(data, dict) and data.get('support', {}).get('state') in ('eol', 'ending', 'unknown'):
             notice, style = support_summary(self.term, data['support'])
+        if isinstance(data, dict) and data.get('initial_maintenance_deferred'):
+            notice, style = self.term.t('setup_repairs_deferred'), 'warning'
+        if isinstance(data, dict) and data.get('core_integrity_ok') is False:
+            notice, style = self.term.t('setup_integrity_warning'), 'warning'
         rows = result_rows(self.term, action, data, self.state)
         if action in ('install', 'setup') and self.state.configured:
             cfg = self.state.load()
