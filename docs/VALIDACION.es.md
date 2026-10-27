@@ -51,4 +51,4 @@ docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.
 
 ## Pendiente en la VM
 
-Instalación de Python/Docker en Ubuntu limpia, disco físico y montaje, reinicio, systemd, DNS/firewall, emisión y renovación pública de certificados, túnel manual y clientes desktop/móvil reales. HTTPS local con CA privada no valida esos pasos. Arm64 y CI remota no se ejecutaron.
+Instalación de Python/Docker en Ubuntu limpia, disco físico y montaje, reinicio, systemd, DNS/firewall, emisión y renovación pública de certificados, túnel manual y clientes desktop/móvil reales. HTTPS local con CA privada no valida esos pasos. Arm64 sin probar. Las pruebas unitarias remotas pasaron en GitHub Actions; la suite Docker remota no se ejecutó.
