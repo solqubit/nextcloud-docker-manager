@@ -26,7 +26,14 @@ class BootstrapTests(unittest.TestCase):
                        + ('exit 17\n' if fail else
                           'if [[ $1 == install ]]; then /bin/ln -s ' + sys.executable + ' "' + str(binaries / 'python3') + '"; fi\n'))
         apt.chmod(0o700)
-        driver = Driver([shutil.which('bash'), 'start.sh', '--version'],
+        # Simulate the privileged entry condition in this private copy only.
+        # CI runs as an ordinary user; the real installer retains its root gate.
+        launcher = root / 'start.sh'
+        source = Path('start.sh').read_text()
+        guard = '$EUID == 0'
+        self.assertEqual(source.count(guard), 1)
+        launcher.write_text(source.replace(guard, '1 == 1', 1))
+        driver = Driver([shutil.which('bash'), str(launcher), '--version'],
                         extra_env={'PATH': str(binaries), 'TMPDIR': str(logs),
                                    'NDM_UI': 'plain' if plain else 'interactive'})
         self.addCleanup(driver.close)
