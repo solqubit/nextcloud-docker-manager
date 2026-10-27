@@ -14,7 +14,7 @@ from .config import access_url, host
 from .core import Error, Runner, State, VERSION
 from .console import Console
 from .docker import Engine, require_engine
-from .i18n import messages
+from .i18n import messages, remember_language, remembered_language
 from .operations import Manager
 from .system import bootstrap, host_info
 from .terminal_ui import Terminal
@@ -111,7 +111,7 @@ def dispatch(manager, args):
     if command == 'install':
         return manager.install(args.nextcloud_version, supplied=args.confirm,
             **{key: getattr(args, key) for key in ('environment', 'address', 'bind', 'http_port', 'https_port', 'timezone', 'storage', 'storage_root')},
-            language=args.lang or 'es')
+            language=args.lang or remembered_language(state) or 'es')
     if not state.configured:
         raise Error('Primero instala Nextcloud / Install Nextcloud first')
     engine = Engine(state)
@@ -190,11 +190,19 @@ def main(argv=None):
         state = State(args.state_dir).open()
         interactive = args.command in (None, 'menu')
         visual = interactive or sys.stdin.isatty() and sys.stdout.isatty()
-        language = args.lang or (state.load()['language'] if state.configured else 'es')
-        console = Console(Terminal(messages(language)), state) if visual else None
+        startup_language = os.environ.pop('NDM_STARTUP_LANGUAGE', None)
+        language = args.lang or (startup_language if startup_language in ('es', 'en') else None) or remembered_language(state)
+        console = Console(Terminal(messages(language or 'es')), state) if visual else None
         if interactive:
+            if language is None:
+                language = console.pick('language', [('es', 'Español', ''), ('en', 'English', '')])
+                if language is None:
+                    return 0
+                console.term.msg = messages(language)
+            remember_language(state, language)
             console.welcome()
             console.run('prepare_host', lambda: bootstrap(Runner(state)))
+        language = language or 'es'
         if console:
             console.run('check_engine', lambda: require_engine(Runner(state)))
         else:

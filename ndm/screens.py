@@ -16,7 +16,7 @@ from .console import Console
 from .core import Cancelled, Error, human
 from .dashboard import dashboard
 from .docker import Engine
-from .i18n import messages
+from .i18n import messages, remember_language, remembered_language
 from .system import host_info
 from .terminal_ui import SEPARATOR, Terminal
 from .views import SERVICES, backup_rows, pair, result_rows
@@ -217,7 +217,7 @@ class Form:
 class Controller:
     def __init__(self, manager, language=None, console=None):
         self.manager, self.state = manager, manager.state
-        self.language = language or (self.state.load()['language'] if self.state.configured else 'es')
+        self.language = language or remembered_language(self.state) or 'es'
         self.view = console or Console(Terminal(messages(self.language)), self.state)
         self.term = self.view.term
         self.last = self.notice = ''
@@ -485,10 +485,7 @@ class Controller:
             if selected:
                 self.language = selected
                 self.term.msg = messages(selected)
-                if self.state.configured:
-                    cfg = self.state.load()
-                    cfg['language'] = selected
-                    self.state.activate(self.state.revision(cfg))
+                remember_language(self.state, selected)
             return
         if action in ('install', 'domains', 'backups', 'recover'):
             return getattr(self, action)()

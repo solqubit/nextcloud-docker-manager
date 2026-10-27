@@ -2,7 +2,7 @@
 
 Instala y administra Nextcloud con Docker en un servidor local o una VPS. Incluye MariaDB, Redis, cron y Caddy para HTTPS. Interfaz en español e inglés.
 
-Menús con flechas, formularios con revisión y progreso animado. Enter selecciona; Esc vuelve. Solo escribes al editar valores o confirmar una restauración.
+Primero eliges el idioma, antes de preparar dependencias; se recuerda en los siguientes arranques. Menús con flechas, formularios y progreso animado. Enter selecciona; Esc vuelve.
 
 [English](README.en.md) · [Pruebas realizadas](docs/VALIDACION.es.md)
 

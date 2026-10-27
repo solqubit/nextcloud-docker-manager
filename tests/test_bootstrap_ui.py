@@ -10,7 +10,7 @@ from pty_driver import Driver
 
 
 class BootstrapTests(unittest.TestCase):
-    def launch(self, *, fail=False, plain=False):
+    def launch(self, *, fail=False, plain=False, choose_language=False):
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
         root = Path(work.name)
@@ -33,11 +33,12 @@ class BootstrapTests(unittest.TestCase):
         guard = '$EUID == 0'
         self.assertEqual(source.count(guard), 1)
         launcher.write_text(source.replace(guard, '1 == 1', 1))
-        driver = Driver([shutil.which('bash'), str(launcher), '--version'],
+        arguments = [] if choose_language else ['--lang', 'en', '--version']
+        driver = Driver([shutil.which('bash'), str(launcher), *arguments],
                         extra_env={'PATH': str(binaries), 'TMPDIR': str(logs),
                                    'NDM_UI': 'plain' if plain else 'interactive'})
         self.addCleanup(driver.close)
-        driver.wait('Python 3 is required')
+        driver.wait('Idioma / Language' if choose_language else 'Python 3 is required')
         driver.logs = logs
         return driver
 
@@ -77,3 +78,13 @@ class BootstrapTests(unittest.TestCase):
         ui.process.wait(timeout=3)
         self.assertEqual(ui.process.returncode, 1)
         self.assertNotIn(b'\x1b[', ui.output)
+
+    def test_language_is_first_even_without_python(self):
+        ui = self.launch(choose_language=True)
+        self.assertNotIn('Python 3', '\n'.join(ui.screen.display))
+        self.assertEqual(list(ui.logs.iterdir()), [])
+        ui.send(b'\x1bOB\r', 'Python 3 is required')
+        self.assertNotIn('Python 3 es necesario', '\n'.join(ui.screen.display))
+        ui.send(b'\x1b')
+        ui.process.wait(timeout=3)
+        self.assertEqual(list(ui.logs.iterdir()), [])

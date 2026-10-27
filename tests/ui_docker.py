@@ -17,7 +17,11 @@ STATE = ROOT / 'terminal'
 
 def launch():
     ui = Driver(['/bin/bash', 'start.sh', '--state-dir', str(STATE)], timeout=240)
-    ui.wait('Administrar Nextcloud')
+    if not (STATE / 'language').exists():
+        ui.wait('Idioma / Language')
+        ui.send(b'\r', 'Administrar Nextcloud')
+    else:
+        ui.wait('Administrar Nextcloud')
     return ui
 
 
