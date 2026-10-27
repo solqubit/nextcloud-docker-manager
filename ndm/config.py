@@ -12,6 +12,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .core import Error, LABEL, version_tuple
 
 
+DEFAULT_HTTP_PORT = 80
+DEFAULT_HTTPS_PORT = 443
+
+
 def host(value):
     value = value.strip().lower().rstrip('.')
     if not value or any(c in value for c in '/\\:@*\n\r\t '):
@@ -103,7 +107,7 @@ def validate(cfg):
 
 
 def initial(version, images, *, environment='lan', bind='127.0.0.1', address=None,
-            http_port=8080, https_port=8443, timezone='UTC', language='es',
+            http_port=DEFAULT_HTTP_PORT, https_port=DEFAULT_HTTPS_PORT, timezone='UTC', language='es',
             storage='directory', storage_root=None, subnet=None):
     identity = secrets.token_hex(8)
     cfg = dict(format=1, id=identity, project='ndm_' + identity, version=version,

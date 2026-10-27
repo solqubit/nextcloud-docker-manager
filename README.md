@@ -16,7 +16,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh
 ```
 
-1. Elige servidor local o VPS, versión, IP, puertos y carpeta de datos. Se ofrecen la última rama y la anterior con soporte oficial.
+1. Elige servidor local o VPS, versión, IP, puertos y carpeta de datos. Se ofrecen la última rama y la anterior con soporte oficial. Los puertos predeterminados son 80/443.
 2. Abre la URL local indicada y crea el administrador en la web de Nextcloud.
 3. Selecciona **Comprobar instalación web** en el gestor.
 4. Añade un dominio cuando quieras acceso externo.
@@ -24,7 +24,7 @@ sudo bash start.sh
 En una VPS, abre primero la instalación privada mediante SSH:
 
 ```bash
-ssh -L 8080:127.0.0.1:8080 usuario@IP_VPS
+ssh -L 8080:127.0.0.1:80 usuario@IP_VPS
 # Abre http://127.0.0.1:8080 en tu PC
 ```
 

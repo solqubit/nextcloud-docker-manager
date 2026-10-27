@@ -11,7 +11,7 @@ import traceback
 from zoneinfo import ZoneInfo, available_timezones
 
 from . import archive
-from .config import access_url, host, port, public_host
+from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host, port, public_host
 from .console import Console
 from .core import Cancelled, Error, human
 from .dashboard import dashboard
@@ -31,13 +31,14 @@ def folder(value):
 
 class Form:
     """In-memory drafts. Escape never writes configuration or changes services."""
-    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=()):
+    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=(), submit=None):
         self.view, self.ui, self.title = console, console.term, title
         self.data, self.original = copy.deepcopy(data), copy.deepcopy(data)
         self._fields, self.installed, self.versions = fields, installed, versions
         self.releases = releases
+        self.submit = submit
         self.selected, self.invalid = 0, ''
-        self.notice, self.notice_style = self.ui.t('form_intro'), 'accent'
+        self.notice, self.notice_style = self.ui.t('install_form_intro' if submit == 'install' else 'form_intro'), 'accent'
         self.reviewing = False
 
     @property
@@ -101,8 +102,9 @@ class Form:
                      ('  ' + state, tone + '>')]
             rows.append((key, label, 'error' if invalid and not pending else ''))
         rows += [(SEPARATOR, '', '')]
-        rows += [('apply' if review else 'review', '▶ ' + self.ui.t('apply_changes' if self.installed else
-                                                   'deploy' if review else 'review'), 'ok')]
+        action = 'apply' if review or self.submit else 'review'
+        label = self.submit or ('apply_changes' if self.installed else 'deploy' if review else 'review')
+        rows += [(action, '▶ ' + self.ui.t(label), 'ok')]
         if review:
             rows.append(('edit', '← ' + self.ui.t('return_edit'), 'accent'))
         rows.append(('cancel', '← ' + self.ui.t('cancel'), ''))
@@ -152,9 +154,10 @@ class Form:
             if key in ('http_port', 'https_port'):
                 def preview(text):
                     try:
-                        port(text)
+                        number = port(text)
                         return self.ui.t('https_reserved', text) if key == 'https_port' else self.ui.t(
-                            'access_preview', f'http://{data.get("address", data.get("bind", "127.0.0.1"))}:{text}')
+                            'access_preview', f'http://{data.get("address", data.get("bind", "127.0.0.1"))}' +
+                            (f':{number}' if number != 80 else ''))
                     except (Error, ValueError):
                         return ''
             value = self.view.edit(key, data[key], lambda text: self.normalize(key, text),
@@ -171,6 +174,8 @@ class Form:
             full = self.display(key)
             hint = self.ui.msg.get('field_help_' + key, self.ui.t('form_edit_hint'))
             return full + ' · ' + hint
+        if key == 'apply' and self.submit == 'install':
+            return self.ui.t('install_submit_help')
         return self.ui.t('review_help') if key in ('review', 'apply') else self.ui.t('form_cancel_hint')
 
     def run(self):
@@ -242,7 +247,7 @@ class Controller:
             if not (data or {}).get('installed'):
                 notice, style = self.term.t('web_setup_help'), 'warning'
                 if cfg['environment'] == 'vps':
-                    rows += pair(self.term, 'ssh_forward', f'ssh -L {cfg["http_port"]}:127.0.0.1:{cfg["http_port"]} usuario@servidor')
+                    rows += pair(self.term, 'ssh_forward', f'ssh -L 8080:{cfg["bind"]}:{cfg["http_port"]} usuario@servidor')
         rows += pair(self.term, 'private_log', self.state.log_path, 'dim')
         self.view.view(action, rows, notice=notice or self.term.t('operation_done'), style=style)
         self.notice, self.notice_style = notice or self.term.t('operation_done'), style
@@ -283,9 +288,9 @@ class Controller:
             return
         info = host_info()
         address = info['address'] if environment == 'lan' else '127.0.0.1'
-        data = dict(version=version, environment=environment, bind=address, address=address, http_port=8080,
-                    https_port=8443, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
-        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases)
+        data = dict(version=version, environment=environment, bind=address, address=address, http_port=DEFAULT_HTTP_PORT,
+                    https_port=DEFAULT_HTTPS_PORT, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
+        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases, submit='install')
         if info['panel_detected']:
             form.notice, form.notice_style = self.term.t('ports_existing'), 'warning'
         while True:
@@ -301,8 +306,15 @@ class Controller:
                 form.notice, form.notice_style, form.reviewing = self.view.local(str(exc)), 'error', False
                 continue
             version = draft.pop('version')
-            self.perform('install', lambda: self.manager.install(version, language=self.language, **draft),
-                         context=[('Nextcloud', version), (self.term.t('access_local'), f'http://{draft["address"]}:{draft["http_port"]}')])
+            local_url = f'http://{draft["address"]}' + (f':{draft["http_port"]}' if draft['http_port'] != 80 else '')
+            try:
+                self.perform('install', lambda: self.manager.install(version, language=self.language, **draft),
+                             context=[('Nextcloud', version), (self.term.t('access_local'), local_url)])
+            except Cancelled:
+                if self.state.configured or self.state.pending:
+                    raise
+                form.notice, form.notice_style = self.term.t('install_cancelled'), 'accent'
+                continue
             return
 
     def domains(self):

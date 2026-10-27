@@ -260,6 +260,16 @@ class Console:
                 'SCHEDULE-ENABLE': ('confirm_schedule', 'accent'),
                 'SCHEDULE-DISABLE': ('confirm_disable_schedule', 'warning'),
             }.get(expected, ('confirm_operation', 'accent'))
+        if expected == 'INSTALL':
+            summary = '\n'.join(str(label) + ': ' + str(value) for label, value in self.context)
+            choice = self.pick('install_confirm_title', [
+                ('back', '← ' + self.t('cancel'), 'accent'),
+                ('apply', '▶ ' + self.t('install_now'), 'ok')],
+                notice=(summary + '\n' if summary else '') + self.t('confirm_install'),
+                help_text=self.t('install_confirm_help'))
+            if choice != 'apply':
+                raise Cancelled(self.t('cancelled'))
+            return
         # The token remains in the review for precise identification, without
         # requiring it to be typed for ordinary reversible actions.
         note = self.t(key) + '\n' + expected

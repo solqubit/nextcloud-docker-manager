@@ -10,7 +10,7 @@ import sys
 import traceback
 
 from . import archive
-from .config import access_url, host
+from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host
 from .core import Error, Runner, State, VERSION
 from .console import Console
 from .docker import Engine, require_engine
@@ -33,8 +33,8 @@ def parser():
     install.add_argument('--environment', choices=['lan', 'vps'], default='lan')
     install.add_argument('--address', default='127.0.0.1')
     install.add_argument('--bind', default='127.0.0.1')
-    install.add_argument('--http-port', type=int, default=8080)
-    install.add_argument('--https-port', type=int, default=8443)
+    install.add_argument('--http-port', type=int, default=DEFAULT_HTTP_PORT)
+    install.add_argument('--https-port', type=int, default=DEFAULT_HTTPS_PORT)
     install.add_argument('--timezone', default='UTC')
     install.add_argument('--storage', choices=['named', 'directory'], default='directory')
     install.add_argument('--storage-root', default='/opt/nextcloud-docker-manager/data')

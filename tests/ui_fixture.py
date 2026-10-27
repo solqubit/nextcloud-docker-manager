@@ -232,7 +232,9 @@ def main():
     mode = sys.argv[2]
     if mode not in ('empty', 'empty-english'):
         version = '32.0.15' if mode == 'obsolete' else '33.0.10'
-        cfg = initial(version, images(version), storage='named', language='en' if mode == 'english' else 'es')
+        # Existing installations keep their saved nonstandard ports.
+        cfg = initial(version, images(version), storage='named', http_port=8080, https_port=8443,
+                      language='en' if mode == 'english' else 'es')
         cfg['status'] = 'ready'
         state.activate(state.revision(cfg))
         make_backup(state)

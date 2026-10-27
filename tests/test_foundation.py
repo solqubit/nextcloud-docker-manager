@@ -21,6 +21,20 @@ def configuration():
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_standard_install_ports_and_explicit_alternatives_match_cli_and_compose(self):
+        from ndm.cli import parser
+        cfg = configuration()
+        args = parser().parse_args(['install'])
+        self.assertEqual((args.http_port, args.https_port), (80, 443))
+        ports = compose(cfg)['services']['proxy']['ports']
+        self.assertEqual([(row['target'], row['published']) for row in ports], [(80, '80'), (443, '443')])
+        self.assertEqual(access_url(cfg), 'http://127.0.0.1')
+        cfg['http_port'], cfg['https_port'] = 8080, 8443
+        validate(cfg)
+        self.assertEqual(access_url(cfg), 'http://127.0.0.1:8080')
+        custom = parser().parse_args(['install', '--http-port', '8080', '--https-port', '8443'])
+        self.assertEqual((custom.http_port, custom.https_port), (8080, 8443))
+
     def test_no_automatic_web_credentials(self):
         cfg = configuration()
         app = compose(cfg)['services']['app']
