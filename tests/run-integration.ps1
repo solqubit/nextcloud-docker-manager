@@ -1,5 +1,6 @@
-param([switch]$SkipBuild, [switch]$LtsOnly)
+param([switch]$SkipBuild, [switch]$LtsOnly, [switch]$UiOnly)
 $ErrorActionPreference = 'Stop'
+if ($LtsOnly -and $UiOnly) { throw 'Choose either LtsOnly or UiOnly' }
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runId = [guid]::NewGuid().ToString('N').Substring(0,12)
 $stateVolume = "ndm-test-state-$runId"
@@ -14,13 +15,15 @@ foreach ($volume in @($stateVolume,$bindVolume)) {
 }
 try {
     [string[]]$suiteArgs = if ($LtsOnly) { @('--lts-only') } else { @('--major','--bind','--latest') }
+    $suiteScript = if ($UiOnly) { 'tests/ui_docker.py' } else { 'tests/run_integration.py' }
+    if ($UiOnly) { $suiteArgs = @() }
     $bindMount = & docker volume inspect --format '{{.Mountpoint}}' $bindVolume
     if ($LASTEXITCODE -ne 0 -or -not $bindMount.StartsWith('/var/lib/docker/volumes/ndm-test-bind-')) { throw 'Unsafe bind fixture' }
     & docker run --rm --name "ndm-test-runner-$runId" --label "com.solqubit.ndm.test=$runId" `
         -v "${repository}:/workspace:ro" -v "${stateVolume}:/ndm-state" `
         -v "${bindVolume}:$bindMount" -v /var/run/docker.sock:/var/run/docker.sock `
         -e "NDM_BIND_FIXTURE=$bindMount" -w /workspace ndm-test-runner:local `
-        python3 -u tests/run_integration.py @suiteArgs
+        python3 -u $suiteScript @suiteArgs
     if ($LASTEXITCODE -ne 0) { throw 'Docker acceptance failed; see output above' }
 } finally {
     foreach ($volume in @($stateVolume,$bindVolume)) {

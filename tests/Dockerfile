@@ -4,5 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash shellcheck
     && rm -rf /var/lib/apt/lists/*
 COPY --from=client /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=client /usr/local/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
+COPY tests/requirements.txt /tmp/ndm-test-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/ndm-test-requirements.txt
 WORKDIR /workspace
 ENV PYTHONPATH=/workspace

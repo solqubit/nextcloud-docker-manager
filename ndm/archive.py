@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 import threading
 
-from .core import Error, atomic, human, sha, stamp
+from .core import Error, atomic, human, progress_values, sha, stamp, step, visual_stage
 
 FILES = {'manifest.json', 'db.sql.gz', 'app.tar', 'proxy.tar'}
 
@@ -127,7 +127,8 @@ def unpack(state, path):
     if shutil.disk_usage(state.path / 'backups').free < path.stat().st_size + 32 * 1024 ** 2:
         raise Error('Insufficient staging space to verify the backup')
     with tempfile.TemporaryDirectory(prefix='.verify-', dir=state.path / 'backups') as work:
-        manifest = extract_checked(path, work)
+        with visual_stage('Verificar integridad del respaldo / Verify backup integrity'):
+            manifest = extract_checked(path, work)
         yield Path(work), manifest
 
 
@@ -141,6 +142,8 @@ def create(engine, kind='manual'):
     free = shutil.disk_usage(state.path).free
     print(f'SQL estimado / estimated: {human(estimated)}; aplicación / application: {human(app_size)}; '
           f'espacio de trabajo / working budget: {human(budget)}', flush=True)
+    progress_values(sql_estimated_bytes=human(estimated), application_size=human(app_size),
+                    working_budget=human(budget), disk_free=human(free))
     if free < budget:
         raise Error(f'Espacio insuficiente / Insufficient backup space: {human(free)}')
     identity = stamp() + '-' + secrets.token_hex(4)
@@ -183,6 +186,7 @@ def create(engine, kind='manual'):
     return destination
 
 
+@step('Importar SQL en el volumen nuevo / Import SQL into the new volume')
 def import_sql(engine, path):
     args = ['docker', 'compose', '-p', engine.cfg['project'], '-f', engine.revision / 'compose.json',
             'exec', '-T', 'db', 'sh', '-ec',
@@ -204,6 +208,7 @@ def import_sql(engine, path):
                 process.wait()
 
 
+@step('Restaurar volumen persistente / Restore persistent volume')
 def restore_volume(engine, name, path, mount):
     with Path(path).open('rb') as source, tempfile.TemporaryFile() as errors:
         process = subprocess.Popen(['docker', 'run', '--rm', '-i', '--network', 'none', '--entrypoint', 'tar',

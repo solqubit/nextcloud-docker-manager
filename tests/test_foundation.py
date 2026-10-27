@@ -219,6 +219,19 @@ class BackupIntegrityTests(unittest.TestCase):
             archive, destination = self.sample(folder)
             self.assertEqual(extract_checked(archive, destination)['format'], 1)
 
+    def test_headless_verification_does_not_add_terminal_output(self):
+        import contextlib
+        import io
+        from types import SimpleNamespace
+        from ndm.archive import unpack
+        with tempfile.TemporaryDirectory() as folder:
+            path, _ = self.sample(folder)
+            (Path(folder) / 'backups').mkdir()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), unpack(SimpleNamespace(path=Path(folder)), path) as (_, manifest):
+                self.assertEqual(manifest['format'], 1)
+            self.assertEqual(output.getvalue(), '')
+
     def test_checksum_change_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             archive, destination = self.sample(folder, corrupt=True)

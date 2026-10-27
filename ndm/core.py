@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import hashlib
+import functools
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,51 @@ LABEL = 'com.solqubit.ndm'
 
 class Error(RuntimeError):
     pass
+
+
+class Cancelled(Error):
+    """A user returned from a confirmation without applying its operation."""
+
+
+_presentation = None
+
+
+@contextlib.contextmanager
+def presentation(view):
+    """Bind the terminal adapter without coupling lifecycle code to curses."""
+    global _presentation
+    previous, _presentation = _presentation, view
+    try:
+        yield
+    finally:
+        _presentation = previous
+
+
+def progress_values(**values):
+    """Optional human-readable metrics; never pass credentials or raw argv."""
+    if _presentation is not None:
+        _presentation.values(values)
+
+
+@contextlib.contextmanager
+def visual_stage(message):
+    """Additional presentation must not change machine-readable CLI output."""
+    if _presentation is None:
+        yield
+    else:
+        with _presentation.stage(message):
+            yield
+
+
+def step(message):
+    """Present an existing synchronous operation as a timed lifecycle step."""
+    def decorate(function):
+        @functools.wraps(function)
+        def run(*args, **kwargs):
+            with visual_stage(message):
+                return function(*args, **kwargs)
+        return run
+    return decorate
 
 
 def stamp():
@@ -76,6 +122,8 @@ def confirm(expected, supplied=None, message=''):
         return
     if supplied is not None or not sys.stdin.isatty():
         raise Error(f'Confirmation required / Confirmación requerida: --confirm {expected}')
+    if _presentation is not None:
+        return _presentation.confirm(expected, message)
     print(message or expected)
     if input(f'Escribe / Type {expected} (Enter = cancelar): ').strip() != expected:
         raise Error('Cancelado / Cancelled')
@@ -214,6 +262,8 @@ class Runner:
         self.state = state
 
     def run(self, args, *, check=True, input=None, timeout=600, quiet=False):
+        if _presentation is not None:
+            _presentation.command(args)
         # Never shell=True; command data and credentials are never evaluated as code.
         try:
             result = subprocess.run([str(x) for x in args], input=input, capture_output=True,
@@ -234,6 +284,10 @@ class Runner:
 
 @contextlib.contextmanager
 def stage(message):
+    if _presentation is not None:
+        with _presentation.stage(message):
+            yield
+        return
     start = time.monotonic()
     print(f'[*] {message}', flush=True)
     try:

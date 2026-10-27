@@ -1,2 +1,4 @@
 **
+!tests/
 !tests/Dockerfile
+!tests/requirements.txt

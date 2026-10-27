@@ -4,7 +4,8 @@
 
 | Área | Resultado |
 |---|---|
-| Pruebas pequeñas | 39 casos aprobados en Python 3.11, 3.12 y 3.13; incluye flechas y Esc en terminal de 80 × 24 |
+| Pruebas pequeñas | 62 casos: controles, formularios, confirmaciones, errores, modo sin color, cambio de tamaño, arranque sin Python y salida CLI |
+| Interfaz completa | Recorridos por teclado y capturas de terminal; instalación, verificación y restauración reales de Nextcloud 35.0.2 desde el asistente |
 | Instalación | Creación del administrador desde la web; instalación de Nextcloud 35.0.2 comprobada |
 | Acceso | WebDAV PUT/GET/PROPFIND, comparticiones, dominios permitidos, HTTP y HTTPS local simultáneos |
 | Certificados y rutas | Certificado local verificado, login v2, CardDAV/CalDAV y consulta de WebFinger |
@@ -28,11 +29,15 @@ Para probar el caso futuro se **simuló únicamente un requisito de Nextcloud**.
 
 Las pruebas Docker requieren al menos 20 GiB libres para imágenes y copias temporales. Crean y eliminan sus propios recursos; conservan las imágenes en caché.
 
+Los ensayos de navegación usan un backend controlado; `--ui-only` prueba la interfaz con Docker real y conserva documentos y comparticiones al restaurar.
+
 ```bash
+python3 -m pip install -r tests/requirements.txt
 python3 -m unittest discover -s tests -v
 shellcheck start.sh tests/run-integration.sh
 bash tests/run-integration.sh
 bash tests/run-integration.sh --lts-only
+bash tests/run-integration.sh --ui-only
 ```
 
 En Windows con Docker Desktop Linux:

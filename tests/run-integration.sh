@@ -17,9 +17,11 @@ trap cleanup EXIT
 bind_mount=$(docker volume inspect --format '{{.Mountpoint}}' "$bind_volume")
 [[ $bind_mount == /var/lib/docker/volumes/ndm-test-bind-* ]] || exit 1
 suite_args=(--major --bind --latest)
+suite_script=tests/run_integration.py
 if [[ ${1:-} == --lts-only ]]; then suite_args=(--lts-only); fi
+if [[ ${1:-} == --ui-only ]]; then suite_args=(); suite_script=tests/ui_docker.py; fi
 docker run --rm --name "ndm-test-runner-$run_id" --label "com.solqubit.ndm.test=$run_id" \
     --network host --add-host host.docker.internal:127.0.0.1 \
     -v "$ROOT:/workspace:ro" -v "$state_volume:/ndm-state" -v "$bind_volume:$bind_mount" \
     -v /var/run/docker.sock:/var/run/docker.sock -e "NDM_BIND_FIXTURE=$bind_mount" \
-    -w /workspace ndm-test-runner:local python3 -u tests/run_integration.py "${suite_args[@]}"
+    -w /workspace ndm-test-runner:local python3 -u "$suite_script" "${suite_args[@]}"

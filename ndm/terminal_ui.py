@@ -22,11 +22,6 @@ def plain(label):
     return ''.join(text for text, _ in label) if isinstance(label, (list, tuple)) else label
 
 
-def translations(root, language):
-    return dict(line.split('\t', 1) for line in
-                (root / 'locales' / (language + '.tsv')).read_text(encoding='utf-8').splitlines())
-
-
 def version(root):
     try:
         return (root / 'VERSION').read_text(encoding='utf-8').strip()
@@ -61,12 +56,23 @@ class Terminal:
         if not capable:
             return action()
         os.environ.setdefault('ESCDELAY', '35')
+        entered = False
         def start(screen):
+            nonlocal entered
             self.screen = screen
+            # This process opens several widgets. ANSI progress pages between
+            # wrappers invalidate ncurses' physical-screen cache.
+            screen.clearok(True)
             screen.keypad(True)
             if hasattr(curses, 'set_escdelay'):
                 curses.set_escdelay(35)
             self.cursor(False)
+            if curses.has_colors():
+                curses.start_color()
+                try:
+                    curses.use_default_colors()
+                except curses.error:
+                    pass
             if curses.has_colors() and 'NO_COLOR' not in os.environ:
                 curses.start_color()
                 try:
@@ -88,6 +94,9 @@ class Terminal:
                     self.styles[name] = curses.color_pair(number) | curses.A_BOLD
             self.styles['dim'] = curses.A_DIM
             self.styles['bold'] = curses.A_BOLD
+            # Selection remains visible with NO_COLOR too.
+            self.styles.setdefault('selected', curses.A_REVERSE | curses.A_BOLD)
+            entered = True
             return action()
         try:
             result = curses.wrapper(start)
@@ -97,6 +106,9 @@ class Terminal:
             sys.stderr.flush()
             return result
         except curses.error:
+            if entered:
+                # Never replay a callback after it has already started.
+                raise
             # Missing terminfo or a limited curses build still permits setup.
             self.screen = None
             return action()
@@ -127,7 +139,7 @@ class Terminal:
         self.width = max(12, min(100, width - self.left - 2))
         return height, width
 
-    def frame(self, title, notice='', notice_style='accent'):
+    def frame(self, title, notice='', notice_style='accent', marker='[?]'):
         """Header shared with lib/ui.sh; returns the first free row and height."""
         self.screen.erase()
         height, width = self.measure()
@@ -139,10 +151,10 @@ class Terminal:
         self.put(0, self.left + len(name), tagline, 'dim')
         self.put(1, self.left, '─' * self.width, 'title')
         self.put(2, self.left, self.context, 'accent')
-        self.put(3, self.left, '[?]', 'title')
+        self.put(3, self.left, marker, notice_style if marker != '[?]' else 'title')
         self.put(3, self.left + 4, title, 'bold')
         marker = MARKERS.get(notice_style, '[*]')
-        notice = clean(notice)
+        notice = clean(str(notice).replace('\n', ' · '))
         if notice.startswith('✓ '):
             notice = notice[2:]
         lines = textwrap.wrap(notice, self.width - 4)[:max(2, min(5, height - 17))]
@@ -192,26 +204,34 @@ class Terminal:
     def draw_label(self, y, label, style, active):
         """A row is plain text or segments [(text, style)]; a style ending in
         '>' right-aligns that segment. The active row is one selection bar."""
+        right = ''.join(text for text, tone in label if tone.endswith('>')) if isinstance(label, (list, tuple)) else ''
         if active:
-            self.put(y, self.left, ('> ' + plain(label)).ljust(self.width),
+            body = ''.join(text for text, tone in label if not tone.endswith('>')) if right else plain(label)
+            room = max(0, self.width - 2 - len(right))
+            shown = body[:room].ljust(room) + right
+            self.put(y, self.left, ('> ' + shown).ljust(self.width),
                      'error' if style == 'error' else 'selected')
             return
         if not isinstance(label, (list, tuple)):
             self.put(y, self.left, '  ' + label, style)
             return
         x = self.left + 2
+        limit = self.left + self.width - len(right)
         for text, part_style in label:
             if part_style.endswith('>'):
-                self.put(y, max(x, self.left + self.width - len(text)), text, part_style[:-1])
+                self.put(y, self.left + self.width - len(text), text, part_style[:-1])
             else:
-                self.put(y, x, text, part_style)
-                x += len(text)
+                shown = text[:max(0, limit - x)]
+                self.put(y, x, shown, part_style)
+                x += len(shown)
 
     def menu(self, title, rows, selected=0, notice='', help_text='', search=False,
              notice_style='accent'):
         """Rows are (value, label, semantic color); return a value or None on Back.
         Rows whose value is SEPARATOR are drawn as a rule and never selected."""
-        selected = min(selected, len(rows) - 1)
+        if not rows:
+            return None
+        selected = max(0, min(selected, len(rows) - 1))
         if self.screen is None:
             choices = [row for row in rows if row[0] != SEPARATOR]
             current = rows[selected][0]
@@ -224,6 +244,8 @@ class Terminal:
                 answer = input(self.t('setup_plain_choice'))
                 if answer.lower() in ('b', 'back', 'volver'):
                     return None
+                if answer == '' and current == SEPARATOR:
+                    current = choices[0][0]
                 if answer == '':
                     return current
                 if answer.isdigit() and 1 <= int(answer) <= len(choices):
@@ -254,12 +276,15 @@ class Terminal:
             if not filtered:
                 self.put(top, self.left, self.t('setup_no_matches'), 'warning')
             self.put(height - 4, self.left, '─' * self.width, 'accent')
-            for row, line in enumerate(textwrap.wrap(help_text, self.width)[:2], height - 3):
-                self.put(row, self.left, line)
             choices = [i for i, row in enumerate(filtered) if row[0] != SEPARATOR]
+            help_value = help_text(filtered[selected][0]) if callable(help_text) and choices else '' if callable(help_text) else help_text
+            for row, line in enumerate(textwrap.wrap(help_value, self.width)[:2], height - 3):
+                self.put(row, self.left, line)
             position = choices.index(selected) + 1 if selected in choices else 0
-            self.put(height - 1, self.left,
-                     f'{position}/{len(choices)} · ' + self.t('setup_search_keys' if search else 'setup_keys'), 'accent')
+            legend = self.t('setup_search_keys' if search else 'setup_keys')
+            if len(legend) + 8 > self.width:
+                legend = self.t('search_keys_short' if search else 'setup_keys_short')
+            self.put(height - 1, self.left, f'{position}/{len(choices)} · ' + legend, 'accent')
             self.screen.refresh()
             key = self.key()
             step = 1
@@ -284,6 +309,64 @@ class Terminal:
             elif search and isinstance(key, str) and key.isprintable():
                 query += key
                 selected = 0
+
+    def view(self, title, rows, notice='', style='accent', newest=False, horizontal=False):
+        """Scrollable information card; Enter/Esc return without text prompts."""
+        if self.screen is None:
+            print('\n' + title, file=sys.stderr)
+            if notice:
+                print(notice, file=sys.stderr)
+            for label, _ in rows:
+                print('  ' + plain(label), file=sys.stderr)
+            if sys.stdin.isatty():
+                input(self.t('continue') + ': ')
+            return
+        offset, column = None, 0
+        while True:
+            top, height = self.frame(title, notice, style, MARKERS.get(style, '[*]'))
+            visible = max(1, height - top - 5)
+            maximum = max(0, len(rows) - visible)
+            offset = maximum if offset is None and newest else min(offset or 0, maximum)
+            self.put(top, self.left, '╭' + '─' * (self.width - 2) + '╮', 'title')
+            for n in range(visible):
+                y = top + 1 + n
+                self.put(y, self.left, '│', 'title')
+                if offset + n < len(rows):
+                    label, tone = rows[offset + n]
+                    if isinstance(label, (list, tuple)) and not column:
+                        x = self.left + 2
+                        for text, color in label:
+                            shown = clean(text)[:max(0, self.left + self.width - 2 - x)]
+                            self.put(y, x, shown, color)
+                            x += len(shown)
+                    else:
+                        self.put(y, self.left + 2, plain(label)[column:column + self.width - 4], tone)
+                self.put(y, self.left + self.width - 1, '│', 'title')
+            self.put(top + visible + 1, self.left, '╰' + '─' * (self.width - 2) + '╯', 'title')
+            self.put(height - 2, self.left,
+                     f'{min(offset + 1, len(rows))}–{min(offset + visible, len(rows))}/{len(rows)}', 'dim')
+            legend = 'logs_view_keys' if horizontal else 'view_keys'
+            self.put(height - 1, self.left, self.t(legend if self.width >= 66 else legend + '_short'), 'accent')
+            self.screen.refresh()
+            key = self.key()
+            if key in ('\x1b', '\n', '\r', curses.KEY_ENTER):
+                return
+            if key in (curses.KEY_DOWN, '\t'):
+                offset = min(maximum, offset + 1)
+            elif key in (curses.KEY_UP, curses.KEY_BTAB):
+                offset = max(0, offset - 1)
+            elif key == curses.KEY_NPAGE:
+                offset = min(maximum, offset + visible)
+            elif key == curses.KEY_PPAGE:
+                offset = max(0, offset - visible)
+            elif key == curses.KEY_HOME:
+                offset, column = 0, 0
+            elif key == curses.KEY_END:
+                offset = maximum
+            elif horizontal and key == curses.KEY_RIGHT:
+                column = min(max((len(plain(row[0])) for row in rows), default=0), column + 8)
+            elif horizontal and key == curses.KEY_LEFT:
+                column = max(0, column - 8)
 
     def edit(self, title, value, hint, validator, secret=False, default=None, preview=None, keys='setup_edit_keys'):
         """Framed text field. default is shown for reference; preview(text)
