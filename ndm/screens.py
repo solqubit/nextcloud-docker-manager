@@ -11,7 +11,7 @@ import traceback
 from zoneinfo import ZoneInfo, available_timezones
 
 from . import archive
-from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host, port, public_host
+from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host, port, prefer_first_tunnel, public_host
 from .console import Console
 from .core import Cancelled, Error, human
 from .dashboard import dashboard
@@ -19,7 +19,7 @@ from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
 from .system import host_info
 from .terminal_ui import SEPARATOR, Terminal
-from .views import SERVICES, backup_rows, pair, release_rows, result_rows, support_summary
+from .views import SERVICES, backup_rows, domain_actions, domain_summary, pair, release_rows, result_rows, support_summary
 
 
 def folder(value):
@@ -324,9 +324,8 @@ class Controller:
     def domains(self):
         while True:
             cfg = self.state.load()
-            choices = ('add_local', 'add_direct', 'add_tunnel', 'remove', 'primary', 'local_tls', 'ca', 'network')
-            action = self.pick('domains', choices, notice=' · '.join(entry['host'] for entry in cfg['domains']),
-                               help_text=self.term.t('domains_help'))
+            action = self.view.pick('domains', domain_actions(self.term), notice=domain_summary(self.term, cfg),
+                                    help_text=lambda key: self.term.t('domains_help_' + key))
             if action is None:
                 return
             self.attempt(lambda: self.domain_action(action, cfg))
@@ -339,7 +338,10 @@ class Controller:
             if mode == 'direct':
                 fields.append('publish')
             data = dict(name='', public=mode != 'local', email='', external_port=443, publish=False)
-            draft = Form(self.view, action, data, fields, installed=True).run()
+            form = Form(self.view, action, data, fields, installed=True, submit='save_access')
+            if prefer_first_tunnel(cfg, mode):
+                form.notice = self.term.t('tunnel_first_primary')
+            draft = form.run()
             if draft is None:
                 return
             self.view.run(action, lambda: self.manager.add_domain(draft['name'], mode=mode, email=draft['email'],
@@ -351,6 +353,8 @@ class Controller:
             if mode == 'tunnel':
                 forward = '127.0.0.1' if cfg['bind'] == '0.0.0.0' else cfg['bind']
                 url += f'\nHost: {name}\nForward: http://{forward}:{cfg["http_port"]}'
+                if self.state.load()['primary'] == name:
+                    note = self.term.t('tunnel_primary_saved')
             self.report(action, url, notice=note)
         elif action == 'network':
             keys = ('bind', 'http_port', 'https_port')
@@ -376,7 +380,11 @@ class Controller:
             entries = [entry for entry in cfg['domains'] if action != 'local_tls' or entry['kind'] == 'local']
             if not entries:
                 return self.report(action, self.term.t('no_addresses'), style='warning')
-            name = self.view.pick(action, [(entry['host'], access_url(cfg, entry), '') for entry in entries])
+            name = self.view.pick(action, [
+                (entry['host'], access_url(cfg, entry) +
+                 (' · ' + self.term.t('domains_current_primary') if entry['host'] == cfg['primary'] else ''),
+                 'ok' if entry['host'] == cfg['primary'] else '') for entry in entries],
+                selected=next((i for i, entry in enumerate(entries) if entry['host'] == cfg['primary']), 0))
             if name is None:
                 return
             if action == 'remove':

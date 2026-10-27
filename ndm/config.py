@@ -131,6 +131,13 @@ def initial(version, images, *, environment='lan', bind='127.0.0.1', address=Non
     return cfg
 
 
+def prefer_first_tunnel(cfg, mode):
+    """Promote the first tunnel while retaining an existing public preference."""
+    current = next(entry for entry in cfg['domains'] if entry['host'] == cfg['primary'])
+    return (mode == 'tunnel' and current['kind'] == 'local'
+            and not any(entry['mode'] == 'tunnel' for entry in cfg['domains']))
+
+
 def access_url(cfg, entry=None):
     entry = entry or next(e for e in cfg['domains'] if e['host'] == cfg['primary'])
     secure = entry['tls'] != 'off'

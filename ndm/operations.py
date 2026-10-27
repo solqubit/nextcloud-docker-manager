@@ -13,7 +13,7 @@ import time
 
 from . import archive
 from .catalog import Catalog
-from .config import access_url, compose, host, initial, port, public_host, validate
+from .config import access_url, compose, host, initial, port, prefer_first_tunnel, public_host, validate
 from .core import Error, Runner, State, atomic, confirm, human, read_json, stage, stamp, version_tuple
 from .docker import Engine
 from .maintenance import Maintenance
@@ -244,11 +244,12 @@ class Manager(Maintenance, DatabaseMigration):
         name = host(name) if mode == 'local' else public_host(name)
         if any(e['host'] == name for e in cfg['domains']):
             raise Error('La dirección ya existe / Address already exists')
+        auto_primary = prefer_first_tunnel(cfg, mode)
         cfg['domains'].append(dict(host=name, kind='local' if mode == 'local' else 'public',
                                    mode=mode, tls=tls if mode == 'local' else 'acme', email=email))
         if mode != 'local':
             cfg['domains'][-1]['external_port'] = port(external_port)
-        if primary:
+        if primary or auto_primary:
             cfg['primary'] = name
         if publish_direct:
             if mode != 'direct':

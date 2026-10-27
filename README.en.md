@@ -33,6 +33,7 @@ After installation: `sudo bash /opt/nextcloud-docker-manager/start.sh --lang en`
 ## Domain and HTTPS
 
 Use **Domains and access** to add or remove hosts and IP addresses and change ports. Keep the local address to retain local access.
+The first tunnel domain automatically becomes primary if you are still using a local address.
 
 - **Cloudflare Tunnel:** install cloudflared manually, route the hostname to `http://LOCAL_IP:HTTP_PORT`, and add that domain in tunnel mode in the manager.
 - **Direct VPS:** point IPv4 DNS to the server, add the domain and publish TCP 80/443; allow these ports in the firewall too.

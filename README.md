@@ -33,6 +33,7 @@ Después de instalar: `sudo bash /opt/nextcloud-docker-manager/start.sh`.
 ## Dominio y HTTPS
 
 En **Dominios y acceso** puedes agregar o quitar dominios e IP y ajustar los puertos. Conserva la dirección local para seguir entrando por ella.
+El primer dominio de un túnel se elige como principal automáticamente si todavía usas una dirección local.
 
 - **Cloudflare Tunnel:** instala cloudflared manualmente, configura el hostname hacia `http://IP_LOCAL:PUERTO_HTTP` y añade ese dominio en modo túnel en el gestor.
 - **VPS directa:** apunta el DNS IPv4 al servidor, añade el dominio y publica TCP 80/443; habilítalos también en el firewall.

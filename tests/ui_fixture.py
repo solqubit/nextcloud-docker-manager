@@ -12,7 +12,7 @@ import tarfile
 import time
 from unittest.mock import patch
 
-from ndm.config import initial
+from ndm.config import initial, prefer_first_tunnel
 from ndm.core import Error, State, atomic, confirm, stage
 from ndm.screens import Controller
 
@@ -132,6 +132,8 @@ class FixtureManager:
     def add_domain(self, name, **kwargs):
         confirm('APPLY')
         cfg = self.state.load()
+        if prefer_first_tunnel(cfg, kwargs['mode']):
+            cfg['primary'] = name
         cfg['domains'].append(dict(host=name, kind='local' if kwargs['mode'] == 'local' else 'public',
                                    mode=kwargs['mode'], tls='off' if kwargs['mode'] == 'local' else 'acme',
                                    email=kwargs['email'], external_port=kwargs['external_port']))

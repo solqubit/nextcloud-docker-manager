@@ -5,11 +5,29 @@ import textwrap
 import re
 
 from .core import human
+from .config import access_url
 from .terminal_ui import clean
 
 
 SERVICES = {'app': 'Nextcloud', 'db': 'MariaDB', 'redis': 'Redis',
             'proxy': 'Caddy / HTTPS', 'cron': 'Cron'}
+
+
+def domain_summary(ui, cfg):
+    def addresses(kind):
+        values = [access_url(cfg, entry) for entry in cfg['domains'] if entry['kind'] == kind]
+        return ', '.join(values[:2]) + (' …' if len(values) > 2 else '') if values else ui.t('domains_not_configured')
+    return '\n'.join((ui.t('domains_summary_primary', access_url(cfg)),
+                      ui.t('domains_summary_local', addresses('local')),
+                      ui.t('domains_summary_public', addresses('public'))))
+
+
+def domain_actions(ui):
+    rows = []
+    for key in ('add_local', 'add_direct', 'add_tunnel', 'remove', 'primary', 'local_tls', 'ca', 'network'):
+        tone = {'add_tunnel': 'accent', 'add_direct': 'accent', 'remove': 'warning', 'primary': 'ok'}.get(key, '')
+        rows.append((key, [(ui.t(key), tone), ('  ' + ui.t('domains_tag_' + key), 'dim>')], tone))
+    return rows
 
 
 def support_summary(ui, support):
