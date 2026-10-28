@@ -70,7 +70,7 @@ Los respaldos guardan SQL, aplicación y certificados. **Excluyen `data/<id>/dat
 
 ## Actualizar y recuperar
 
-En **Mantenimiento → Restablecer contraseña de Nextcloud** puedes seleccionar la cuenta y confirmar dos veces una contraseña nueva. La actual no se puede mostrar. El gestor no registra la nueva contraseña; con cifrado del servidor activo se requiere la recuperación específica de Nextcloud para conservar el acceso a los archivos cifrados. Al restaurar SQL se recuperan también las contraseñas que existían en ese respaldo.
+En el menú principal, **Cuentas → Cambiar contraseña**, puedes seleccionar la cuenta y confirmar dos veces una contraseña nueva. La actual no se puede mostrar. El gestor no registra la nueva contraseña; con cifrado del servidor activo se requiere la recuperación específica de Nextcloud para conservar el acceso a los archivos cifrados. Al restaurar SQL se recuperan también las contraseñas que existían en ese respaldo.
 
 - **Nextcloud:** parches dentro de la misma rama; versiones mayores consecutivas, empezando por el último parche de la actual.
 - **MariaDB:** conserva `11.4.x`. Solo permite cambiar de LTS si el Nextcloud objetivo lo exige.

@@ -1,10 +1,12 @@
 """Opt-in real Docker acceptance through the actual terminal installer."""
 import json
 from pathlib import Path
+import secrets
 import sys
 
 from ndm.catalog import Catalog
-from ndm.core import Runner, State, read_json
+from ndm.core import Runner, State, atomic, read_json
+from ndm.dashboard import GROUPS
 from ndm.docker import Engine
 from integration import Suite
 from pty_driver import Driver
@@ -17,12 +19,57 @@ STATE = ROOT / 'terminal'
 
 def launch():
     ui = Driver(['/bin/bash', 'start.sh', '--state-dir', str(STATE)], timeout=240)
-    if not (STATE / 'language').exists():
-        ui.wait('Idioma / Language')
-        ui.send(b'\r', 'Administrar Nextcloud')
-    else:
-        ui.wait('Administrar Nextcloud')
+    try:
+        if not (STATE / 'language').exists() and not (STATE / 'current' / 'config.json').exists():
+            ui.wait('Idioma / Language')
+            ui.send(b'\r', 'Administrar Nextcloud')
+        else:
+            ui.wait('Administrar Nextcloud')
+    except BaseException:
+        ui.close()
+        raise
     return ui
+
+
+def password_recovery():
+    credentials_path = STATE / 'cache' / 'fixture-credentials.json'
+    old = read_json(credentials_path)
+    new_password = 'UiReset-' + secrets.token_urlsafe(28)
+    ui = launch()
+    try:
+        shown = '\n'.join(ui.screen.display)
+        assert 'Cuentas' in shown and 'Cambiar contraseña' in shown
+        ui.capture('live-11-accounts-on-dashboard')
+        actions = [key for _, keys in GROUPS for key in keys if key not in ('setup', 'recover')]
+        ui.send(b'\x1bOH' + b'\t' * actions.index('reset_password') + b'\r', 'Selecciona una cuenta')
+        ui.send(b'\r', 'Nueva contraseña')
+        assert old['user'] in '\n'.join(ui.screen.display)
+        ui.send(new_password.encode() + b'\r', 'Repite la nueva')
+        ui.send(new_password.encode() + b'\r', 'Revisar y confirmar')
+        assert old['user'] in '\n'.join(ui.screen.display)
+        ui.capture('live-12-confirm-selected-account')
+        ui.send(b'\x1bOB\r', 'Contraseña restablecida')
+        assert new_password.encode() not in ui.output
+        ui.send(b'\r', 'Administrar Nextcloud')
+        ui.send(b'\x1bOF\r')
+        ui.process.wait(timeout=5)
+        assert ui.process.returncode == 0
+    finally:
+        ui.close()
+    state = State(STATE).open()
+    try:
+        suite = Suite(state)
+        path = '/remote.php/dav/files/' + old['user'] + '/'
+        assert suite.request(path, 'PROPFIND', authenticated=True, extra={'Depth': '0'})[0] == 401
+        atomic(credentials_path, dict(user=old['user'], password=new_password))
+        assert suite.request(path, 'PROPFIND', authenticated=True, extra={'Depth': '0'})[0] == 207
+        suite.check_file()
+        for log in (STATE / 'logs').glob('*.log'):
+            assert new_password not in log.read_text(errors='replace')
+        assert state.pending is None
+        print('[PASS] Dashboard Accounts resets the selected real Nextcloud user: old password rejected, new password accepted, documents/shares retained and no password in UI/logs')
+    finally:
+        state.lock_file.close()
 
 
 def main():
@@ -114,6 +161,9 @@ def main():
         Suite(opened).logging_health()
         assert opened.pending is None
         print('[PASS] Real terminal SQL/app backup, verification, guarded restoration, live files/shares retained and return to backup list')
+        opened.lock_file.close()
+        opened = None
+        password_recovery()
         print(json.dumps({'nextcloud': target, 'services': 5, 'backup_restore': 'verified', 'user_files': 'retained'}))
     finally:
         if active:

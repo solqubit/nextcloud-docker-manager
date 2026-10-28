@@ -12,7 +12,7 @@
 | Configuración inicial | InnoDB con 256 MiB de registro, índices y MIME iniciales; error de integridad por log reproducido y corregido conservando los registros |
 | Tienda de aplicaciones | Límite de 300 s aplicado tras crear el administrador web sin comprobar manualmente la instalación; valor personalizado de 600 s conservado al reiniciar cron y verificar |
 | Persistencia de ajustes | Actualización real `33.0.9 → 33.0.10`, respaldo y restauración conservan 600 s y la contraseña restablecida; restaurar SQL antiguo sin ese ajuste aplica 300 s automáticamente |
-| Cuentas | Restablecimiento real en Nextcloud 35.0.2: contraseña anterior rechazada, nueva aceptada por WebDAV, documentos y comparticiones conservados; contraseña ausente de los registros del gestor |
+| Cuentas | Desde el menú principal **Cuentas → Cambiar contraseña**, con Nextcloud 35.0.2 real: usuario visible, contraseña anterior rechazada (401), nueva aceptada por WebDAV (207), documentos y comparticiones conservados; contraseña ausente de la pantalla y los registros del gestor |
 | Dominios en la interfaz | Direcciones existentes separadas del formulario nuevo; segundo túnel conserva el principal y el primer dominio directo se elige como principal; navegación real por teclado |
 | Actualizaciones | Nextcloud `33.0.9 → 33.0.10 → 34.0.5`; MariaDB `11.4.12 → 11.4.13` por separado |
 | Respaldos | SQL, aplicación y certificados; verificación inicial automática al solicitar el primer respaldo; tamaños, SHA-256 y gzip verificados; documentos excluidos |

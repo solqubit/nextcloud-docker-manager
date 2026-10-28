@@ -9,6 +9,7 @@ GROUPS = [
     ('group_service', ('status', 'setup', 'start', 'stop', 'logs')),
     ('group_data', ('updates', 'backups', 'recover')),
     ('group_settings', ('domains', 'language')),
+    ('group_accounts', ('reset_password',)),
     ('group_checks', ('maintenance', 'diagnose')),
     ('group_manager', ('self_update', 'exit')),
 ]

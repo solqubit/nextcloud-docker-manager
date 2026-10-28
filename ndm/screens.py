@@ -645,16 +645,12 @@ class Controller:
             if enabled is not None:
                 rows += [('disable', self.term.t('disable'), 'warning') if enabled else ('enable', self.term.t('enable'), 'accent'),
                          ('schedule_status', self.term.t('schedule_status'), '')]
-            rows.append(('reset_password', self.term.t('reset_password'), 'accent'))
             state = self.term.t('schedule_unavailable' if enabled is None else 'schedule_on' if enabled else 'schedule_off')
             notice, tone = self.notice_for(state)
             selected = self.menu('maintenance', rows, notice=notice, notice_style=tone,
                                  help_text=self.term.t('maintenance_help'))
             if not selected:
                 return
-            if selected == 'reset_password':
-                self.attempt(self.reset_password)
-                continue
             lookup = {'enable': 'enable', 'disable': 'disable', 'schedule_status': 'status'}
             self.attempt(lambda: self.perform('maintenance', self.manager.maintenance if selected == 'run_checks'
                                               else lambda: self.manager.schedule(lookup[selected])))
@@ -704,7 +700,7 @@ class Controller:
                 remember_language(self.state, selected)
                 self.notice, self.notice_style = self.term.t('language_changed'), 'ok'
             return
-        if action in ('install', 'domains', 'backups', 'recover', 'updates', 'logs', 'maintenance'):
+        if action in ('install', 'domains', 'backups', 'recover', 'updates', 'logs', 'maintenance', 'reset_password'):
             return getattr(self, action)()
         if action == 'self_update':
             source = self.view.edit('source', '', folder, hint=self.term.t('self_update_help'))

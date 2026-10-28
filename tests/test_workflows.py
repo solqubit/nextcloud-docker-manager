@@ -11,7 +11,7 @@ from pty_driver import Driver
 
 
 ROOT_ACTIONS = ['status', 'start', 'stop', 'logs', 'updates', 'backups', 'domains', 'language',
-                'maintenance', 'diagnose', 'self_update', 'exit']
+                'reset_password', 'maintenance', 'diagnose', 'self_update', 'exit']
 
 
 class WorkflowTests(unittest.TestCase):
@@ -396,8 +396,10 @@ class WorkflowTests(unittest.TestCase):
 
     def test_password_reset_identifies_account_masks_input_and_checks_confirmation(self):
         ui = self.launch()
-        self.root(ui, 'maintenance', 'Comprueba servicios')
-        ui.select(3, 'Selecciona una cuenta')
+        self.assertIn('Cuentas', '\n'.join(ui.screen.display))
+        self.assertIn('Cambiar contraseña', '\n'.join(ui.screen.display))
+        ui.capture('40-main-menu-accounts')
+        self.root(ui, 'reset_password', 'Selecciona una cuenta')
         ui.send(b'\r', 'Nueva contraseña')
         self.assertIn('test-admin', '\n'.join(ui.screen.display))
         ui.send(b'New-Password-987!\r', 'Repite la nueva')

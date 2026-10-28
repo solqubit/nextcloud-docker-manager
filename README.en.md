@@ -70,7 +70,7 @@ Backups contain SQL, application state and certificates. **They exclude `data/<i
 
 ## Updates and recovery
 
-Use **Maintenance → Reset Nextcloud password** to select an account and enter a new password twice. The current password cannot be displayed. The manager does not log the new password; server-side encryption requires Nextcloud's specific recovery process to retain access to encrypted files. Restoring SQL also restores the passwords that existed in that backup.
+Use **Accounts → Reset password** on the main menu to select an account and enter a new password twice. The current password cannot be displayed. The manager does not log the new password; server-side encryption requires Nextcloud's specific recovery process to retain access to encrypted files. Restoring SQL also restores the passwords that existed in that backup.
 
 - **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
 - **MariaDB:** keeps `11.4.x`. Changing LTS is allowed only when required by the target Nextcloud.
