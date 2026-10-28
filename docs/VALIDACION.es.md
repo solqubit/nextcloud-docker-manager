@@ -4,7 +4,7 @@
 
 | Área | Resultado |
 |---|---|
-| Pruebas pequeñas | 130 casos: interfaz, instalación, dominio principal automático, puertos, idioma, respaldos, soporte y ajustes iniciales |
+| Pruebas pequeñas | 133 casos: interfaz, instalación, dominio principal automático, puertos, idioma, respaldos, soporte y ajustes iniciales |
 | Interfaz completa | Recorridos por teclado y capturas de terminal; instalación, verificación y restauración reales de Nextcloud 35.0.2 desde el asistente |
 | Instalación | Creación del administrador desde la web; instalación de Nextcloud 35.0.2 comprobada |
 | Acceso | WebDAV PUT/GET/PROPFIND, comparticiones, dominios permitidos, HTTP y HTTPS local simultáneos |

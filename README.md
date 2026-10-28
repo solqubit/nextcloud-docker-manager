@@ -25,7 +25,7 @@ sudo bash start.sh
 
 1. Elige servidor local o VPS, versión, IP, puertos y carpeta de datos. Se ofrecen la última rama y la anterior con soporte oficial. Los puertos predeterminados son 80/443.
 2. Abre la URL local indicada y crea el administrador en la web de Nextcloud.
-3. Puedes seleccionar **Comprobar instalación web**; si vas directamente a crear un respaldo, el gestor la ejecuta automáticamente tras confirmar, siempre que ya hayas creado el administrador. En instalaciones nuevas con SQL de hasta 64 MiB completa índices y tipos MIME; con bases mayores los deja para mantenimiento planificado.
+3. El gestor completa automáticamente la verificación inicial al respaldar, actualizar Nextcloud o sus componentes y aplicar configuraciones, siempre que ya hayas creado el administrador. **Comprobar instalación web** sigue disponible para ejecutarla directamente. En instalaciones nuevas con SQL de hasta 64 MiB completa índices y tipos MIME; con bases mayores los deja para mantenimiento planificado.
 4. Añade un dominio cuando quieras acceso externo.
 
 En una VPS, o en cualquier servidor con IP pública, la primera instalación escucha solo en 127.0.0.1 y se abre mediante SSH (el gestor rechaza una IP pública hasta que exista el administrador):

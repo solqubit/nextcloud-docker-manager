@@ -25,7 +25,7 @@ sudo bash start.sh --lang en
 
 1. Choose local server or VPS, version, IP, ports and data directory. The latest and previous officially maintained majors are offered. The default ports are 80/443.
 2. Open the displayed local URL and create the administrator in the web installer.
-3. You can select **Check web installation**; if you go straight to creating a backup, the manager runs it automatically after confirmation, provided the administrator already exists. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
+3. The manager automatically completes initial verification before backups, Nextcloud or component updates, and configuration changes, provided the administrator already exists. **Check web installation** remains available to run it directly. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
 4. Add a domain when you want external access.
 
 On a VPS, or any server with a public IP, the first installation listens only on 127.0.0.1 and opens through SSH (the manager rejects a public IP until the administrator exists):

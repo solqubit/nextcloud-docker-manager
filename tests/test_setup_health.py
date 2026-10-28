@@ -205,3 +205,31 @@ class SetupHealthTests(unittest.TestCase):
         manager.setup_check.assert_called_once_with()
         create.assert_not_called()
         self.assertIsNone(state.pending)
+
+    def test_shared_readiness_completes_pending_verification_by_default(self):
+        state, engine, manager, _, _, _ = self.backup_fixture()
+        self.assertIs(manager.ready(), engine)
+        manager.setup_check.assert_called_once_with()
+        self.assertEqual(state.load()['status'], 'ready')
+
+    def test_every_component_update_completes_setup_before_resolving_images(self):
+        for component in ('redis', 'db', 'proxy'):
+            with self.subTest(component=component):
+                state, _, manager, _, _, create = self.backup_fixture()
+                manager.catalog.latest = Mock(side_effect=Error('Fixture registry unavailable'))
+                with self.assertRaisesRegex(Error, 'Fixture registry unavailable'):
+                    manager.update_component(component, supplied='UPDATE-' + component.upper())
+                manager.setup_check.assert_called_once_with()
+                self.assertEqual(state.load()['status'], 'ready')
+                self.assertIsNone(state.pending)
+                create.assert_not_called()
+
+    def test_settings_keep_verified_state_when_form_predates_automatic_setup(self):
+        state, _, manager, _, _, _ = self.backup_fixture()
+        draft = state.load()
+        draft['domains'].append(dict(host='another.local', kind='local', mode='local', tls='off', email=''))
+        manager.settings(draft, supplied='APPLY')
+        manager.setup_check.assert_called_once_with()
+        self.assertEqual(state.load()['status'], 'ready')
+        self.assertFalse(state.load()['initial_maintenance_pending'])
+        self.assertEqual(state.load()['domains'][-1]['host'], 'another.local')

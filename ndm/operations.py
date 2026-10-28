@@ -132,7 +132,7 @@ class Manager(Maintenance, DatabaseMigration):
                 'status': engine.status(), 'operation': self.state.pending,
                 'services': services, 'support': self.catalog.support_status(engine.cfg['version'])}
 
-    def ready(self, *, complete_setup=False):
+    def ready(self, *, complete_setup=True):
         if self.state.pending:
             raise Error('Operación pendiente; usa recover / Pending operation; use recover')
         engine = Engine(self.state)
@@ -147,10 +147,10 @@ class Manager(Maintenance, DatabaseMigration):
         if engine.cfg['status'] != 'ready':
             if complete_setup:
                 # The administrator already exists. Complete the manager's checks,
-                # then reload and validate the resulting revision before backing up.
+                # then reload and validate the resulting revision for every operation.
                 with stage('Comprobar instalación web / Check web installation'):
                     self.setup_check()
-                return self.ready()
+                return self.ready(complete_setup=False)
             # finish() marks the installation ready; running it first would skip the initial repairs.
             raise Error('Primero elige «Comprobar instalación web» / First run «Check web installation»')
         return engine
@@ -256,6 +256,13 @@ class Manager(Maintenance, DatabaseMigration):
     def settings(self, cfg, supplied=None):
         old_engine = self.ready()
         old = old_engine.cfg
+        # Forms may have been opened before ready() completed the initial checks.
+        # Preserve the verified state instead of restoring the form's stale flags.
+        for key in ('status', 'initial_maintenance_pending'):
+            if key in old:
+                cfg[key] = old[key]
+            else:
+                cfg.pop(key, None)
         validate(cfg)
         confirm('APPLY', supplied)
         revision = self.state.revision(cfg)
