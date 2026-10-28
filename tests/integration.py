@@ -180,14 +180,15 @@ class Suite:
                     self.manager.update('33.0.10', supplied='UPDATE-33.0.10')
                 raise AssertionError('Rehearsal failure ignored')
             except Error:
-                assert self.state.pending['phase'] == 'backed-up'
+                # The live SQL was never touched, so the service reopens unchanged by itself.
+                assert self.state.pending is None
                 assert self.state.load()['version'] == '33.0.9'
-                assert self.state.load()['maintenance_gate'] is True
-            self.manager.recover('resume', supplied='RESUME')
+                assert self.state.load()['maintenance_gate'] is False
+                assert self.request('/status.php')[0] == 200
             self.engine = Engine(self.state)
             assert self.engine.status()['versionstring'] == '33.0.9'
             self.check_file()
-            print('[PASS] Failed rehearsal blocks deployment, preserves maintenance and journal; recovery resumes original SQL/application')
+            print('[PASS] Failed rehearsal blocks deployment and reopens the original SQL/application without manual recovery')
 
     def update(self):
         original_db = self.engine.cfg['images']['db']

@@ -30,6 +30,41 @@ def domain_actions(ui):
     return rows
 
 
+def local(ui, text):
+    """Lifecycle messages are 'español / English'; show only the interface language."""
+    parts = str(text).split(' / ')
+    if len(parts) != 2:
+        return str(text)
+    return parts[1] if ui.msg.get('locale') == 'en' else parts[0]
+
+
+def operation_summary(ui, pending):
+    action = pending.get('action', pending.get('kind', ''))
+    phase = pending.get('phase', '')
+    names = [ui.msg.get('op_' + action, action), ui.msg.get('phase_' + phase, phase)]
+    return ui.t('pending_summary', *names)
+
+
+def update_rows(ui, cfg, available):
+    current, rows = cfg['version'], []
+    for version in available.get('patches') or []:
+        rows.append(('patch:' + version, [(f'Nextcloud {current} → {version}', 'ok'),
+                                          ('  ' + ui.t('updates_tag_patch'), 'dim>')], ''))
+    # A major upgrade starts from the latest patch, so it stays visible but dimmed until then.
+    blocked = bool(available.get('patches'))
+    for version in available.get('next_major') or []:
+        rows.append(('major:' + version, [(f'Nextcloud {current} → {version}', 'dim' if blocked else 'warning'),
+                                          ('  ' + ui.t('updates_tag_major'), 'dim>')], ''))
+    if available.get('refreshed_image'):
+        rows.append(('refresh', [(ui.t('updates_refresh_label', current), 'accent'),
+                                 ('  ' + ui.t('updates_tag_refresh'), 'dim>')], ''))
+    for role, item in (available.get('components') or {}).items():
+        if isinstance(item, dict) and item.get('image_changed'):
+            rows.append(('component:' + role, [(f'{SERVICES[role]} {item["current"]} → {item["available"]}', ''),
+                                               ('  ' + ui.t('updates_tag_component'), 'dim>')], ''))
+    return rows
+
+
 def support_summary(ui, support):
     state = support.get('state', 'unknown')
     until = support.get('support_until', '')
@@ -130,7 +165,7 @@ def result_rows(ui, action, result, state):
         if result.get('last_maintenance'):
             rows += section(ui, 'last_maintenance')
             rows += [(clean(str(result['last_maintenance'].get('time', ''))), '')]
-            rows += [(clean(error), 'warning') for error in result['last_maintenance'].get('errors', [])]
+            rows += [(clean(local(ui, error)), 'warning') for error in result['last_maintenance'].get('errors', [])]
         return rows
     if isinstance(result, str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', result):
         return pair(ui, 'version', 'Nextcloud ' + result, 'ok')
@@ -168,7 +203,7 @@ def result_rows(ui, action, result, state):
                 if isinstance(item, (dict, list)):
                     rows += expand(item, depth + 1)
                 else:
-                    for line in textwrap.wrap(clean(item), 68):
+                    for line in textwrap.wrap(clean(local(ui, item)), 68):
                         rows.append(('· ' + line, 'warning' if depth == 1 and action == 'maintenance' else ''))
         else:
             rows += [(clean(value), '')]

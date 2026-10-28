@@ -86,7 +86,7 @@ def extract_checked(path, destination):
     try:
         return _extract_checked(path, destination)
     except (tarfile.TarError, EOFError, KeyError, TypeError, ValueError) as exc:
-        raise Error('Invalid or incomplete backup / Respaldo inválido o incompleto') from exc
+        raise Error('Respaldo inválido o incompleto / Invalid or incomplete backup') from exc
 
 
 def _extract_checked(path, destination):
@@ -96,7 +96,9 @@ def _extract_checked(path, destination):
             raise Error('Invalid backup members')
         if next(m for m in items if m.name == 'manifest.json').size > 1024 * 1024:
             raise Error('Backup manifest exceeds supported size')
-        archive.extractall(destination, members=items, filter='data')
+        # Python < 3.11.4 lacks extraction filters; members() above already admits only
+        # the four expected regular files, so the plain extraction is equivalent there.
+        archive.extractall(destination, members=items, **({'filter': 'data'} if hasattr(tarfile, 'data_filter') else {}))
     manifest = json.loads((Path(destination) / 'manifest.json').read_text())
     if manifest.get('format') != 1:
         raise Error('Unsupported backup format')
@@ -123,29 +125,60 @@ def _extract_checked(path, destination):
 def unpack(state, path):
     path = Path(path).absolute()
     if not path.is_file() or path.is_symlink():
-        raise Error('Backup is not a regular file')
+        raise Error('El respaldo no es un archivo normal / Backup is not a regular file')
     if shutil.disk_usage(state.path / 'backups').free < path.stat().st_size + 32 * 1024 ** 2:
-        raise Error('Insufficient staging space to verify the backup')
+        raise Error('Espacio insuficiente para verificar el respaldo / Insufficient staging space to verify the backup')
     with tempfile.TemporaryDirectory(prefix='.verify-', dir=state.path / 'backups') as work:
         with visual_stage('Verificar integridad del respaldo / Verify backup integrity'):
             manifest = extract_checked(path, work)
         yield Path(work), manifest
 
 
-def create(engine, kind='manual'):
-    """Caller quiesces app/cron/proxy; SQL remains available for a consistent dump."""
-    state, cfg = engine.state, engine.cfg
+def backup_kind(path):
+    """Manifest kind of a published backup, or None when it cannot be read."""
+    try:
+        with tarfile.open(path, 'r:') as archive:
+            member = archive.getmember('manifest.json')
+            if not member.isfile() or member.size > 1024 * 1024:
+                return None
+            return json.load(archive.extractfile(member)).get('kind')
+    except (OSError, tarfile.TarError, KeyError, ValueError, AttributeError):
+        return None
+
+
+def clean_leftovers(state):
+    """Remove staging left by a killed process. The state lock guarantees no other writer."""
+    folder = state.path / 'backups'
+    for path in folder.glob('*.partial'):
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+    for path in [*folder.glob('.backup-*'), *folder.glob('.verify-*')]:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def preflight(engine):
+    """Space needed by create(); checked while Nextcloud is still online."""
+    clean_leftovers(engine.state)
     estimated = engine.db_size()
     app_size = engine.app_size()
     # Stream, completed package and validation extraction coexist at the peak.
     budget = max(estimated * 6, 128 * 1024 * 1024) + app_size * 3 + 256 * 1024 * 1024
-    free = shutil.disk_usage(state.path).free
+    free = shutil.disk_usage(engine.state.path).free
+    if free < budget:
+        raise Error(f'Espacio insuficiente para el respaldo: {human(free)} libres, {human(budget)} necesarios / '
+                    f'Insufficient backup space: {human(free)} free, {human(budget)} required')
+    return estimated, app_size, budget, free
+
+
+def create(engine, kind='manual'):
+    """Caller quiesces app/cron/proxy; SQL remains available for a consistent dump."""
+    state, cfg = engine.state, engine.cfg
+    estimated, app_size, budget, free = preflight(engine)
     print(f'SQL estimado / estimated: {human(estimated)}; aplicación / application: {human(app_size)}; '
           f'espacio de trabajo / working budget: {human(budget)}', flush=True)
     progress_values(sql_estimated_bytes=human(estimated), application_size=human(app_size),
                     working_budget=human(budget), disk_free=human(free))
-    if free < budget:
-        raise Error(f'Espacio insuficiente / Insufficient backup space: {human(free)}')
     identity = stamp() + '-' + secrets.token_hex(4)
     destination = state.path / 'backups' / (identity + '.ndm.tar')
     with tempfile.TemporaryDirectory(prefix='.backup-', dir=state.path / 'backups') as work:
@@ -156,7 +189,8 @@ def create(engine, kind='manual'):
                 '--skip-lock-tables nextcloud')
         sql_args = ['docker', 'compose', '-p', cfg['project'], '-f', engine.revision / 'compose.json',
                     'exec', '-T', 'db', 'sh', '-ec', dump]
-        stream_out(sql_args, work / 'db.sql.gz', compress=True)
+        # Large databases need more than an hour: allow about 2 MiB/s of SQL.
+        stream_out(sql_args, work / 'db.sql.gz', compress=True, timeout=max(3600, estimated // (2 * 1024 * 1024)))
         stream_out(['docker', 'run', '--rm', '--network', 'none', '--volumes-from', cid + ':ro',
                     '--entrypoint', 'tar', cfg['images']['app'], '-C', '/var/www/html',
                     '--exclude=./data', '--exclude=./nextcloud-init-sync.lock', '-cf', '-', '.'], work / 'app.tar')
@@ -191,16 +225,23 @@ def import_sql(engine, path):
     args = ['docker', 'compose', '-p', engine.cfg['project'], '-f', engine.revision / 'compose.json',
             'exec', '-T', 'db', 'sh', '-ec',
             'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb -uroot nextcloud']
+    # Allow roughly 1 MiB/s of compressed SQL, never less than an hour.
+    limit = max(3600, Path(path).stat().st_size // (1024 * 1024))
     with tempfile.TemporaryFile() as errors, gzip.open(path, 'rb') as source:
         process = subprocess.Popen([str(x) for x in args], stdin=subprocess.PIPE, stdout=errors, stderr=errors)
-        timer = threading.Timer(3600, process.kill)
+        timer = threading.Timer(limit, process.kill)
         timer.start()
         try:
-            shutil.copyfileobj(source, process.stdin, length=1024 * 1024)
-            process.stdin.close()
+            try:
+                shutil.copyfileobj(source, process.stdin, length=1024 * 1024)
+                process.stdin.close()
+            except BrokenPipeError:
+                # mariadb stopped at an SQL error; its stderr below explains why.
+                pass
             if process.wait() != 0:
                 errors.seek(0)
-                raise Error('SQL restore failed: ' + errors.read(2200).decode(errors='replace'))
+                detail = errors.read(2200).decode(errors='replace')
+                raise Error(f'Falló la importación SQL: {detail} / SQL restore failed: {detail}')
         finally:
             timer.cancel()
             if process.poll() is None:
@@ -214,6 +255,13 @@ def restore_volume(engine, name, path, mount):
         process = subprocess.Popen(['docker', 'run', '--rm', '-i', '--network', 'none', '--entrypoint', 'tar',
             '--mount', 'type=volume,src=' + name + ',dst=' + mount,
             engine.cfg['images']['app'], '-xpf', '-', '-C', mount], stdin=source, stdout=errors, stderr=errors)
-        if process.wait(timeout=1800) != 0:
+        try:
+            code = process.wait(timeout=max(1800, Path(path).stat().st_size // (1024 * 1024)))
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.wait()
+            raise Error('La restauración del volumen superó el tiempo límite / Volume restore timed out') from exc
+        if code != 0:
             errors.seek(0)
-            raise Error('Application restore failed: ' + errors.read(2200).decode(errors='replace'))
+            detail = errors.read(2200).decode(errors='replace')
+            raise Error(f'Falló la restauración de la aplicación: {detail} / Application restore failed: {detail}')

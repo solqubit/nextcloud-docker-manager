@@ -42,6 +42,7 @@ class Catalog:
 class FixtureManager:
     def __init__(self, state, require_db=False):
         self.state, self.catalog, self.require_db = state, Catalog(), require_db
+        self.patched = False
 
     def record(self, action, **kwargs):
         with (self.state.path / 'ui-calls.jsonl').open('a') as out:
@@ -78,8 +79,13 @@ class FixtureManager:
 
     def checks(self):
         time.sleep(0.25)
-        return {'current': self.state.load()['version'], 'patches': ['33.0.11'], 'next_major': ['34.0.5'],
-                'components': {'db': '11.4.14', 'redis': '7.4.13', 'proxy': '2.11.8'}}
+        # Same shape as Manager.checks(); the major unlocks once the patch is applied.
+        return {'current': self.state.load()['version'],
+                'patches': [] if self.patched or self.require_db else ['33.0.11'], 'next_major': ['34.0.5'],
+                'refreshed_image': True,
+                'components': {role: {'current': current, 'available': available, 'image_changed': True}
+                               for role, current, available in (('db', '11.4.13', '11.4.14'), ('redis', '7.4.12', '7.4.13'),
+                                                                ('proxy', '2.11.7', '2.11.8'))}}
 
     def database_choices(self, target):
         return {'required': self.require_db, 'choices': [{'series': '11.8', 'community_until': '2030-06-04'}],
@@ -93,6 +99,7 @@ class FixtureManager:
     def update(self, target, *, major=False, refresh=False):
         confirm(('MIGRATE-' if major else 'UPDATE-') + target)
         self.record('update', target=target, major=major, refresh=refresh)
+        self.patched = self.patched or not (major or refresh)
         for title in ('Respaldo consistente / Consistent backup',
                       'Ensayar SQL y aplicación sin archivos de usuarios / Rehearse SQL without user files',
                       'Aplicar y verificar / Apply and verify'):
@@ -159,6 +166,9 @@ class FixtureManager:
         self.record('maintenance')
         return {'errors': ['Cron needs review'] if (self.state.path / 'fail-checks').exists() else [],
                 'status': {'installed': True}, 'updates': self.checks()}
+
+    def schedule_enabled(self):
+        return False
 
     def schedule(self, action):
         if action != 'status':
@@ -241,7 +251,7 @@ def main():
         state.activate(state.revision(cfg))
         make_backup(state)
     if mode == 'pending':
-        state.begin('update', traffic_opened=True)
+        state.begin('update', traffic_opened=True, backup=str(state.path / 'backups' / '20261027T090000Z-fixture.ndm.tar'))
     manager = FixtureManager(state, require_db=mode == 'required-db')
     try:
         with patch('ndm.screens.Engine', FixtureEngine), patch('ndm.cli.Engine', FixtureEngine), patch('ndm.screens.archive.unpack', unpack):

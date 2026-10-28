@@ -37,7 +37,7 @@ class Engine:
         value = result.stdout.strip()
         if not value:
             if required:
-                raise Error(f'Container unavailable / Contenedor no disponible: {service}')
+                raise Error(f'Contenedor no disponible: {service} / Container unavailable: {service}')
             return None
         if '\n' in value:
             raise Error('Unexpected replicated service')
@@ -69,28 +69,46 @@ class Engine:
             args = ['docker', 'volume', 'create', '--label', LABEL + '.installation=' + self.cfg['id'],
                     '--label', LABEL + '.role=' + role]
             if self.cfg['storage'] == 'directory':
+                if snap_docker(self.runner):
+                    # Snap confinement cannot bind folders such as /opt/nextcloud-docker-manager/data.
+                    raise Error('Docker instalado por Snap no puede usar carpetas del servidor; elige volúmenes Docker '
+                                'o instala Docker Engine (docker-ce) / Snap Docker cannot bind server folders; '
+                                'choose Docker volumes or install Docker Engine (docker-ce)')
                 folder = self.volume_path(role)
                 root = Path(self.cfg['storage_root'])
                 if any(p.is_symlink() for p in [root, root / self.cfg['id'], folder]):
                     raise Error('Unsafe storage symlink')
                 # Initial creation only; later starts must verify the recorded filesystem.
                 folder.mkdir(parents=True, exist_ok=True, mode=0o750)
+                selinux_label(self.runner, folder)
                 args += ['--driver', 'local', '--opt', 'type=none', '--opt', 'o=bind', '--opt', 'device=' + str(folder)]
                 if role == 'data':
                     self.cfg['data_device'] = folder.stat().st_dev
+                    self.cfg['data_fsid'] = filesystem_id(folder)
             self.runner.run(args + [name])
 
     def check_mount(self):
         if self.cfg['storage'] == 'directory':
             folder = self.volume_path('data')
-            if (not folder.is_dir() or folder.is_symlink()
-                    or self.cfg.get('data_device') is None
-                    or folder.stat().st_dev != self.cfg['data_device']):
+            if not folder.is_dir() or folder.is_symlink() or self.cfg.get('data_device') is None:
                 raise Error('El almacenamiento de datos no está disponible en su dispositivo original / Data mount unavailable')
+            # Device numbers change after reboots on Btrfs subvolumes or renumbered USB/LVM
+            # disks; the filesystem id stays with the filesystem itself.
+            if self.cfg.get('data_fsid') is not None:
+                if filesystem_id(folder) == self.cfg['data_fsid']:
+                    return
+            elif folder.stat().st_dev == self.cfg['data_device']:
+                return
+            raise Error('El almacenamiento de datos no está disponible en su dispositivo original / Data mount unavailable')
 
     def check_ports(self, old=None):
         ids = self.runner.run(['docker', 'ps', '--quiet']).stdout.split()
         containers = json.loads(self.runner.run(['docker', 'container', 'inspect', *ids]).stdout) if ids else []
+        own = set()
+        for container in containers:
+            if container.get('Config', {}).get('Labels', {}).get(LABEL + '.installation') == self.cfg['id']:
+                for bindings in container.get('NetworkSettings', {}).get('Ports', {}).values():
+                    own.update(int(binding['HostPort']) for binding in bindings or [])
         for key in ('http_port', 'https_port'):
             if old and old['bind'] == self.cfg['bind'] and old[key] == self.cfg[key]:
                 continue
@@ -100,12 +118,18 @@ class Engine:
                 for bindings in container.get('NetworkSettings', {}).get('Ports', {}).values():
                     for binding in bindings or []:
                         if int(binding['HostPort']) == self.cfg[key] and (binding['HostIp'] in ('0.0.0.0', '::', self.cfg['bind']) or self.cfg['bind'] == '0.0.0.0'):
-                            raise Error(f"Puerto ocupado por otro contenedor / Port owned by another container: {self.cfg[key]}")
+                            raise Error(f"Puerto ocupado por otro contenedor: {self.cfg[key]} / Port owned by another container: {self.cfg[key]}")
+            if self.cfg[key] in own:
+                # Our own proxy holds this port on the previous IP, so a socket probe on a
+                # wildcard/other IP would always collide with it. Compose reports any other
+                # conflict when the proxy is recreated, and settings() then restores the old revision.
+                continue
             probe = socket.socket()
             try:
                 probe.bind((self.cfg['bind'], self.cfg[key]))
             except OSError as exc:
-                raise Error(f"IP/puerto no disponible: {self.cfg['bind']}:{self.cfg[key]}") from exc
+                where = f"{self.cfg['bind']}:{self.cfg[key]}"
+                raise Error(f"IP/puerto no disponible: {where} / IP/port unavailable: {where}") from exc
             finally:
                 probe.close()
 
@@ -188,14 +212,14 @@ class Engine:
     def verify(self, installed=True, configure_cron=False):
         status = self.wait_app(installed=installed)
         if self.sql('SELECT 1;').stdout.strip() != '1':
-            raise Error('SQL readiness failed')
+            raise Error('MariaDB no responde / SQL readiness failed')
         result = self.dc('exec', '-T', 'redis', 'sh', '-ec',
                          'REDISCLI_AUTH="$NDM_REDIS_PASSWORD" redis-cli ping')
         if result.stdout.strip() != 'PONG':
-            raise Error('Redis readiness failed')
+            raise Error('Redis no responde / Redis readiness failed')
         if installed:
             if status.get('versionstring') != self.cfg['version']:
-                raise Error('Application version differs from selected image')
+                raise Error('La versión de Nextcloud no coincide con la imagen elegida / Application version differs from selected image')
             if configure_cron:
                 self.occ('background:cron')
         until = time.monotonic() + 90
@@ -206,13 +230,13 @@ class Engine:
                 break
             time.sleep(2)
         else:
-            raise Error('Reverse proxy failed its readiness check; inspect proxy logs')
+            raise Error('El proxy no está listo; revisa los registros de Caddy / Reverse proxy failed its readiness check; inspect proxy logs')
         if installed and not self.cfg['maintenance_gate']:
             entry = next(e for e in self.cfg['domains'] if e['host'] == self.cfg['primary'])
             headers, body = json.loads(self.probe_http(entry))
             code = headers[0].split()[1] if headers else ''
             if code not in ('200', '308') or (code == '200' and not json.loads(body).get('installed')):
-                raise Error('Nextcloud is not reachable through its configured proxy route')
+                raise Error('Nextcloud no responde a través del proxy configurado / Nextcloud is not reachable through its configured proxy route')
         return status
 
     def probe_http(self, entry):
@@ -235,7 +259,7 @@ class Engine:
             self.cfg['images']['app'], '-Pk', '/ndm-space'])
         available = int(result.stdout.splitlines()[-1].split()[3]) * 1024
         if available < required:
-            raise Error('Insufficient SQL/application volume space / Espacio insuficiente en los volúmenes SQL/aplicación')
+            raise Error('Espacio insuficiente en los volúmenes SQL/aplicación / Insufficient SQL/application volume space')
         return available
 
     def app_size(self):
@@ -274,10 +298,34 @@ class Engine:
                     self.runner.run(['docker', 'volume', 'rm', name])
 
 
+def filesystem_id(path):
+    return os.statvfs(path).f_fsid
+
+
+def selinux_label(runner, folder):
+    """Bind-mounted folders need the container label on SELinux hosts (Fedora, RHEL, Rocky, Alma)."""
+    enforce = Path('/sys/fs/selinux/enforce')
+    if not enforce.exists() or not shutil.which('chcon'):
+        return
+    # Docker CE confines containers only with selinux-enabled; labelling is harmless otherwise.
+    runner.run(['chcon', '-R', '-t', 'container_file_t', folder], check=False)
+
+
+def snap_docker(runner):
+    root = runner.run(['docker', 'info', '--format', '{{.DockerRootDir}}'], check=False).stdout.strip()
+    return root.startswith('/var/snap/') or (shutil.which('docker') or '').startswith('/snap/')
+
+
 def require_engine(runner):
+    """Technical requirements, independent of the distribution that provides them."""
     if runner.run(['docker', 'version', '--format', '{{.Server.Os}}']).stdout.strip() != 'linux':
-        raise Error('Docker must use Linux containers')
-    runner.run(['docker', 'compose', 'version'])
+        raise Error('Docker debe usar contenedores Linux / Docker must use Linux containers')
+    if runner.run(['docker', 'compose', 'version'], check=False).returncode:
+        raise Error('Falta Docker Compose V2 (docker compose) / Docker Compose V2 plugin missing')
     data = runner.run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}']).stdout.strip()
     if os.environ.get('DOCKER_HOST', data).startswith(('tcp:', 'ssh:')):
         raise Error('Solo Docker local / Only a local Docker Engine is supported')
+    architecture = runner.run(['docker', 'info', '--format', '{{.Architecture}}'], check=False).stdout.strip()
+    if architecture and architecture not in ('x86_64', 'amd64', 'aarch64', 'arm64'):
+        raise Error(f'Arquitectura de Docker no compatible: {architecture} (amd64/arm64) / '
+                    f'Unsupported Docker architecture: {architecture} (amd64/arm64)')

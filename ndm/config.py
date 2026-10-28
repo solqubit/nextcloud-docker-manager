@@ -14,6 +14,8 @@ from .core import Error, LABEL, version_tuple
 
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 443
+# RFC 1918, loopback, link-local, carrier-grade NAT (Tailscale) and IPv6 ULA/loopback.
+PRIVATE_CLIENTS = 'private_ranges 100.64.0.0/10 169.254.0.0/16'
 
 
 def host(value):
@@ -175,13 +177,24 @@ def _proxy_route(scheme, gate, *, hsts=False):
 
 
 def caddyfile(cfg):
-    lines = ['{', '    admin off', '    auto_https disable_redirects', '}', '', 'http://:80 {',
+    # Trust X-Forwarded-For only from private peers (cloudflared, LAN proxies) so Nextcloud
+    # sees the real client instead of one shared address for every tunnel user.
+    lines = ['{', '    admin off', '    auto_https disable_redirects', '    servers {',
+             '        trusted_proxies static private_ranges', '    }', '}', '', 'http://:80 {',
              '    handle /ndm-health {', '        respond "ok" 200', '    }',
              '    handle /.well-known/acme-challenge/* {', '        respond "Unknown ACME challenge" 404', '    }']
     # Caddy's built-in HTTP-01 handler precedes user routes while a challenge is active.
     for i, entry in enumerate(cfg['domains']):
+        plain = not (entry['tls'] != 'off' and entry['mode'] != 'tunnel')
+        if plain:
+            # Plain-HTTP routes (LAN addresses and the tunnel origin) are for private
+            # clients only: with the proxy published on 0.0.0.0, a spoofed Host header
+            # from the internet would otherwise bypass the tunnel and HTTPS.
+            lines += [f'    @outside{i} {{', f"        host {entry['host']}",
+                      f'        not remote_ip {PRIVATE_CLIENTS}', '    }',
+                      f'    handle @outside{i} {{', '        respond "Use HTTPS" 403', '    }']
         lines += [f"    @entry{i} host {entry['host']}", f'    handle @entry{i} {{']
-        if entry['tls'] != 'off' and entry['mode'] != 'tunnel':
+        if not plain:
             external = entry.get('external_port', 443) if entry['kind'] == 'public' else cfg['https_port']
             suffix = '' if external == 443 else ':' + str(external)
             lines += [f'        redir https://{entry["host"]}{suffix}{{uri}} 308']

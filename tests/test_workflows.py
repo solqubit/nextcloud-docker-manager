@@ -10,9 +10,8 @@ import unittest
 from pty_driver import Driver
 
 
-ROOT_ACTIONS = ['status', 'setup', 'start', 'stop', 'logs', 'updates', 'major', 'refresh',
-                'components', 'backup', 'backups', 'maintenance', 'domains', 'language',
-                'diagnose', 'self_update', 'exit']
+ROOT_ACTIONS = ['status', 'start', 'stop', 'logs', 'updates', 'backups', 'domains', 'language',
+                'maintenance', 'diagnose', 'self_update', 'exit']
 
 
 class WorkflowTests(unittest.TestCase):
@@ -92,8 +91,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual((cfg['http_port'], cfg['https_port']), (80, 443))
         self.assertIn(b'ssh -L 8080:127.0.0.1:80', ui.output)
         ui.send(b'\r', 'Administrar Nextcloud')
-        self.root(ui, 'setup', 'Operación completada')
+        # The pending web-setup check is offered and preselected right after installing.
+        self.assertIn('Comprobar instalación web', '\n'.join(ui.screen.display))
+        ui.send(b'\r', 'Operación completada')
         ui.send(b'\x1b', 'Administrar Nextcloud')
+        self.assertNotIn('Comprobar instalación web', '\n'.join(ui.screen.display))
         self.root(ui, 'status', 'Configuración web')
         ui.capture('08-service-status')
         self.assertEqual([call['action'] for call in self.calls(ui)], ['install', 'setup'])
@@ -121,9 +123,10 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('11-logs-newest')
         ui.send(b'\x1bOH', '000')
         ui.send(b'\x1bOF', '219')
+        # Logs return to the service list, not to the dashboard.
+        ui.send(b'\x1b', 'Muestra las últimas 200')
         ui.send(b'\x1b', 'Administrar Nextcloud')
-        ui.send(b'\x1bOH\x1bOC\r', 'Revisar y confirmar')
-        self.assertIn(b'BACKUP', ui.output)
+        ui.send(b'\x1bOH\x1bOC\r', 'Principal:')
         ui.send(b'\x1b', 'Administrar Nextcloud')
         self.assertEqual(self.calls(ui), [])
 
@@ -142,19 +145,23 @@ class WorkflowTests(unittest.TestCase):
         cfg = json.loads((ui.state / 'current' / 'config.json').read_text())
         self.assertEqual([entry['host'] for entry in cfg['domains']], ['127.0.0.1', 'cloud.example.com'])
         self.assertEqual(cfg['primary'], 'cloud.example.com')
-        self.assertIn('Principal: https://cloud.example.com', '\n'.join(ui.screen.display))
-        self.assertIn('Local: http://127.0.0.1:8080', '\n'.join(ui.screen.display))
+        # The result notice now precedes the summary, so lines may wrap differently.
+        shown = ' '.join(' '.join(ui.screen.display).split())
+        self.assertIn('Principal: https://cloud.example.com', shown)
+        self.assertIn('Local: http://127.0.0.1:8080', shown)
         self.assertEqual(self.calls(ui)[0]['action'], 'add_domain')
         ui.send(b'\x1b', 'Administrar Nextcloud')
 
     def test_patch_and_major_keep_database_migration_conditional(self):
         ui = self.launch()
         self.root(ui, 'updates', 'Se hará un ensayo')
+        self.assertIn('después de aplicar el último parche', '\n'.join(ui.screen.display))
         ui.send(b'\r', 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         ui.capture('13-update-result')
-        ui.send(b'\r', 'Administrar Nextcloud')
-        self.root(ui, 'major', 'Se hará un ensayo')
+        # Back on the refreshed updates screen, the major is now the first choice.
+        ui.send(b'\r', 'Se hará un ensayo')
+        self.assertNotIn('33.0.11', '\n'.join(ui.screen.display))
         ui.send(b'\r', 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         self.assertEqual([item['action'] for item in self.calls(ui)], ['update', 'update'])
@@ -162,12 +169,13 @@ class WorkflowTests(unittest.TestCase):
 
     def test_required_lts_review_is_separate_and_can_cancel_nextcloud(self):
         ui = self.launch('required-db')
-        self.root(ui, 'major', 'Se hará un ensayo')
+        self.root(ui, 'updates', 'Se hará un ensayo')
         ui.send(b'\r', 'MariaDB LTS requerida')
         ui.capture('14-required-database')
         ui.send(b'\r', 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         ui.send(b'\r', 'Revisar y confirmar')
+        ui.send(b'\x1b', 'Cancelado')
         ui.send(b'\x1b', 'Administrar Nextcloud')
         self.assertEqual([item['action'] for item in self.calls(ui)], ['migrate_database'])
         self.assertEqual(self.calls(ui)[0]['for_nextcloud'], '34.0.5')
@@ -178,11 +186,11 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('15-backup-list')
         ui.select(2, 'Detalle del respaldo')
         ui.capture('16-backup-detail')
-        ui.send(b'\x1bOF\x1bOA\r', 'Revisar y confirmar')
+        ui.send(b'\x1bOF\x1bOA\x1bOA\r', 'Revisar y confirmar')
         ui.send(b'\x1b', 'Selecciona un respaldo')
         self.assertEqual(self.calls(ui), [])
         ui.select(2, 'Detalle del respaldo')
-        ui.send(b'\x1bOF\x1bOA\r', 'Revisar y confirmar')
+        ui.send(b'\x1bOF\x1bOA\x1bOA\r', 'Revisar y confirmar')
         self.accept(ui, 'Escribe RESTORE')
         ui.capture('17-restore-confirm')
         ui.send(b'WRONG\r', 'Escribe RESTORE')
@@ -194,14 +202,16 @@ class WorkflowTests(unittest.TestCase):
 
     def test_components_maintenance_stop_and_self_update(self):
         ui = self.launch()
-        self.root(ui, 'components', 'Cada componente')
-        ui.send(b'\r', 'Revisar y confirmar')
+        self.root(ui, 'updates', 'Se hará un ensayo')
+        ui.select(3, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
-        ui.send(b'\r', 'Administrar Nextcloud')
-        self.root(ui, 'maintenance', 'Comprueba servicios')
+        ui.send(b'\r', 'Se hará un ensayo')
+        ui.send(b'\x1b', 'Administrar Nextcloud')
+        self.root(ui, 'maintenance', 'Comprobaciones diarias desactivadas')
         ui.select(1, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
-        ui.send(b'\r', 'Administrar Nextcloud')
+        ui.send(b'\r', 'Comprobaciones de salud')
+        ui.send(b'\x1b', 'Administrar Nextcloud')
         self.root(ui, 'stop', '¿Detener los servicios?')
         ui.send(b'\x1b', 'Administrar Nextcloud')
         self.root(ui, 'self_update', 'descargado y revisado')
@@ -246,7 +256,8 @@ class WorkflowTests(unittest.TestCase):
         ui.select(1, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         ui.send(b'\r', 'Principal:')
-        ui.select(5, 'Configurar HTTPS local')
+        ui.select(5, 'Activar o desactivar HTTPS local')
+        self.assertIn('Sin HTTPS local', '\n'.join(ui.screen.display))
         ui.select(1, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         ui.send(b'\r', 'Principal:')
@@ -255,8 +266,8 @@ class WorkflowTests(unittest.TestCase):
         ui.select(7, 'Selecciona un campo')
         ui.select(1, 'Puerto HTTP entre')
         ui.send(b'\x158088\r', 'actualizado en el formulario')
-        self.form_review(ui)
-        ui.send(b'\r', 'Puerto ocupado por otro contenedor')
+        # A single review: «Apply changes» goes straight to the port check and confirmation.
+        self.form_review(ui, 'Puerto ocupado por otro contenedor')
         ui.capture('23-network-invalid-port')
         ui.send(b'\x1b', '¿Descartar los cambios')
         self.accept(ui, 'Principal:')
@@ -293,23 +304,27 @@ class WorkflowTests(unittest.TestCase):
         self.root(ui, 'diagnose', 'Espacio libre')
         ui.capture('25-diagnose')
         ui.send(b'\r', 'Administrar Nextcloud')
-        for index in (0, 2, 3):
-            self.root(ui, 'maintenance', 'Comprueba servicios')
-            ui.select(index, 'Revisar y confirmar' if index == 2 else 'Operación completada')
-            if index == 2:
+        self.root(ui, 'maintenance', 'Comprueba servicios')
+        for index in (0, 1, 2):
+            ui.select(index, 'Revisar y confirmar' if index == 1 else 'Operación completada')
+            if index == 1:
                 self.accept(ui, 'Operación completada')
-            ui.send(b'\r', 'Administrar Nextcloud')
+            # Health checks stay open after each action.
+            ui.send(b'\r', 'Comprueba servicios')
+        ui.send(b'\x1b', 'Administrar Nextcloud')
         self.assertEqual([row['action'] for row in self.calls(ui)],
                          ['engine_start', 'engine_stop', 'maintenance', 'schedule', 'schedule'])
 
     def test_failed_operation_and_failed_checks_are_visible(self):
         ui = self.launch()
-        self.root(ui, 'components', 'Cada componente')
-        ui.select(2, 'Revisar y confirmar')
+        self.root(ui, 'updates', 'Se hará un ensayo')
+        ui.select(5, 'Revisar y confirmar')
         self.accept(ui, 'No se pudo validar el proxy')
         ui.capture('26-operation-error')
         self.assertIn('No se pudo validar', '\n'.join(ui.screen.display))
+        ui.send(b'\x1b', 'La operación no terminó')
         ui.send(b'\x1b', 'Administrar Nextcloud')
+        self.assertNotIn('La operación no terminó', '\n'.join(ui.screen.display))
         (ui.state / 'fail-checks').touch()
         self.root(ui, 'maintenance', 'Comprueba servicios')
         ui.send(b'\r', 'Hay comprobaciones con problemas')
@@ -335,10 +350,11 @@ class WorkflowTests(unittest.TestCase):
 
     def test_refresh_and_direct_domain_with_publication_choice(self):
         ui = self.launch()
-        self.root(ui, 'refresh', 'Se hará un ensayo')
-        ui.send(b'\r', 'Revisar y confirmar')
+        self.root(ui, 'updates', 'Se hará un ensayo')
+        ui.select(2, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
-        ui.send(b'\r', 'Administrar Nextcloud')
+        ui.send(b'\r', 'Se hará un ensayo')
+        ui.send(b'\x1b', 'Administrar Nextcloud')
         self.root(ui, 'domains', 'Principal:')
         ui.select(1, 'Selecciona un campo')
         ui.send(b'\r', 'IP o dominio sin')
@@ -355,13 +371,35 @@ class WorkflowTests(unittest.TestCase):
         ui = self.launch()
         ui.resize(50, 18)
         ui.capture('30-resized-dashboard')
-        self.assertIn('Esc Volver', '\n'.join(ui.screen.display))
-        ui.send(b'\t\t\t')
+        # On the dashboard Esc exits, and the legend says so.
+        self.assertIn('Esc Salir', '\n'.join(ui.screen.display))
+        ui.send(b'\t\t')
         ui.resize(100, 32)
         ui.capture('31-expanded-dashboard')
         ui.send(b'\r', '¿Detener los servicios?')
         ui.send(b'\x1b', 'Administrar Nextcloud')
         self.assertEqual(self.calls(ui), [])
+
+    def test_dashboard_escape_moves_to_exit_before_closing(self):
+        ui = self.launch()
+        ui.send(b'\x1b', 'Pulsa Enter o Esc otra vez para salir')
+        self.assertIsNone(ui.process.poll())
+        ui.send(b'\x1b')
+        ui.process.wait(timeout=3)
+        self.assertEqual(ui.process.returncode, 0)
+
+    def test_backup_delete_asks_and_returns_to_list(self):
+        ui = self.launch()
+        self.root(ui, 'backups', 'Selecciona un respaldo')
+        ui.select(2, 'Detalle del respaldo')
+        ui.send(b'\x1bOF\x1bOA\r', '¿Eliminar este respaldo?')
+        ui.send(b'\x1b', 'Selecciona un respaldo')
+        self.assertTrue(any((ui.state / 'backups').glob('*.ndm.tar')))
+        ui.select(2, 'Detalle del respaldo')
+        ui.send(b'\x1bOF\x1bOA\r', '¿Eliminar este respaldo?')
+        self.accept(ui, 'Respaldo eliminado')
+        self.assertFalse(any((ui.state / 'backups').glob('*.ndm.tar')))
+        self.assertIn('Todavía no hay respaldos', '\n'.join(ui.screen.display))
 
     def test_fresh_install_shows_recommended_and_previous_with_support_dates(self):
         ui = self.launch('empty')

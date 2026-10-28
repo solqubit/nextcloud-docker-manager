@@ -150,7 +150,7 @@ class Catalog:
         versions = [r['name'] for r in data['results'] if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', r['name'])
                     and r['name'].startswith(series + '.')]
         if not versions:
-            raise Error(f'No stable images: {repo}:{series}')
+            raise Error(f'No hay imágenes estables: {repo}:{series} / No stable images: {repo}:{series}')
         return max(versions, key=version_tuple)
 
     def resolve(self, repo, tag, arch=None):
@@ -178,7 +178,7 @@ class Catalog:
         match = re.search(r'MariaDB ((?:[0-9]+\.[0-9]+\s*(?:/\s*)?)+)', text)
         php = re.search(r'PHP Runtime (.+?)See ', text)
         if not match or not php:
-            raise Error(f'Cannot verify requirements: {url}')
+            raise Error(f'No se pudieron verificar los requisitos: {url} / Cannot verify requirements: {url}')
         value = {'source': url, 'mariadb': re.findall(r'[0-9]+\.[0-9]+', match[1]),
                  'php': re.findall(r'[0-9]+\.[0-9]+', php[1])}
         atomic(path, value)

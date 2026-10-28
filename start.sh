@@ -2,9 +2,23 @@
 set -Eeuo pipefail
 umask 077
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# The requirement is any Python 3.11+, whatever its name: RHEL/Rocky/Alma and Ubuntu 22.04
+# keep an older python3 and ship newer interpreters as python3.11, python3.12…
+ndm_find_python() {
+    local candidate
+    for candidate in python3 python3.14 python3.13 python3.12 python3.11; do
+        if command -v "$candidate" >/dev/null &&
+            "$candidate" -c 'import sys;sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+            ndm_python=$(command -v "$candidate")
+            return 0
+        fi
+    done
+    return 1
+}
+ndm_python=''
 ndm_python_found=false
 if command -v python3 >/dev/null; then ndm_python_found=true; fi
-if [[ $ndm_python_found == false ]] || ! python3 -c 'import sys;sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+if ! ndm_find_python; then
     # Language selection must also work before Python/curses is available.
     ndm_language=${NDM_STARTUP_LANGUAGE:-}
     ndm_state_dir=${NDM_STATE_DIR:-/opt/nextcloud-docker-manager}
@@ -22,7 +36,10 @@ if [[ $ndm_python_found == false ]] || ! python3 -c 'import sys;sys.exit(0 if sy
             esac
         done
     }
-    ndm_options "$@"
+    if ! ndm_options "$@"; then
+        printf 'Falta un valor para la opción / Missing option value: --lang es|en, --state-dir PATH\n' >&2
+        exit 2
+    fi
     if [[ -z $ndm_language && -f $ndm_state_dir/language ]]; then
         IFS= read -r ndm_language < "$ndm_state_dir/language" || :
         case "$ndm_language" in es|en) ;; *) ndm_language='';; esac
@@ -97,32 +114,64 @@ if [[ $ndm_python_found == false ]] || ! python3 -c 'import sys;sys.exit(0 if sy
             while :; do
                 printf '  %s' "$(ndm_t plain)" >&2
                 IFS= read -r ndm_answer || return 1
-                case "${ndm_answer,,}" in
-                    ''|1|n|no|es) ndm_choice=0; break;;
-                    2|y|yes|s|si|sí|en|english) ndm_choice=1; break;;
-                    b|back|volver) return 1;;
-                esac
+                # $4 distinguishes the language question from yes/no: "si" must never mean English.
+                if [[ ${4:-confirm} == language ]]; then
+                    case "${ndm_answer,,}" in
+                        ''|1|es|español|espanol|spanish) ndm_choice=0; break;;
+                        2|en|english|inglés|ingles) ndm_choice=1; break;;
+                        b|back|volver) return 1;;
+                    esac
+                else
+                    case "${ndm_answer,,}" in
+                        ''|1|n|no|cancel|cancelar) ndm_choice=0; break;;
+                        2|y|yes|s|si|sí|install|instalar) ndm_choice=1; break;;
+                        b|back|volver) return 1;;
+                    esac
+                fi
             done
         fi
     }
     if [[ $ndm_menu == true && -z $ndm_language ]]; then
-        ndm_choose 'Idioma / Language' 'Español' 'English' || exit 1
+        ndm_choose 'Idioma / Language' 'Español' 'English' language || exit 1
         if (( ndm_choice == 0 )); then ndm_language=es; else ndm_language=en; fi
     fi
     ndm_language=${ndm_language:-es}
     export NDM_STARTUP_LANGUAGE=$ndm_language
-    if [[ $ndm_python_found == true ]]; then
-        ndm_header "$(ndm_t minimum)"
-        exit 1
-    fi
-    if [[ $(uname -s) == Linux && $EUID == 0 ]] && command -v apt-get >/dev/null; then
-        ndm_choose "$(ndm_t python)" "$(ndm_t cancel)" "$(ndm_t install)" || exit 1
+    ndm_title=$(ndm_t python)
+    [[ $ndm_python_found == false ]] || ndm_title=$(ndm_t minimum)
+    ndm_pm=''
+    for ndm_candidate in apt-get dnf zypper apk; do
+        if command -v "$ndm_candidate" >/dev/null; then ndm_pm=$ndm_candidate; break; fi
+    done
+    # Try the distribution's default interpreter first, then its newer named packages.
+    ndm_install_python() {
+        local package
+        case "$ndm_pm" in
+            apt-get)
+                DEBIAN_FRONTEND=noninteractive apt-get update || return
+                for package in python3 python3.12 python3.11; do
+                    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$package" ca-certificates && ndm_find_python && return 0
+                done;;
+            dnf)
+                for package in python3 python3.12 python3.11; do
+                    dnf -y install "$package" && ndm_find_python && return 0
+                done;;
+            zypper)
+                for package in python3 python313 python312 python311; do
+                    zypper --non-interactive install "$package" && ndm_find_python && return 0
+                done;;
+            apk) apk add python3 && ndm_find_python && return 0;;
+        esac
+        return 1
+    }
+    if [[ $(uname -s) == Linux && $EUID == 0 && -n $ndm_pm ]]; then
+        ndm_choose "$ndm_title" "$(ndm_t cancel)" "$(ndm_t install)" || exit 1
         (( ndm_choice == 1 )) || exit 1
         ndm_log_dir=$(mktemp -d "${TMPDIR:-/tmp}/ndm-bootstrap.XXXXXXXX")
         ndm_log="$ndm_log_dir/python.log"
         if [[ $ndm_animated == true ]]; then
             printf '\033[2J\033[H' >&2
-            ndm_header "$(ndm_t python)"
+            ndm_header "$ndm_title"
             (
                 trap - EXIT INT TERM
                 ndm_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -140,7 +189,8 @@ if [[ $ndm_python_found == false ]] || ! python3 -c 'import sys;sys.exit(0 if sy
         else
             printf '  [*] %s\n' "$(ndm_t install)" >&2
         fi
-        if { apt-get update && apt-get install -y --no-remove python3 ca-certificates; } > "$ndm_log" 2>&1; then
+        # Package managers must never wait for an invisible prompt behind the spinner.
+        if ndm_install_python < /dev/null > "$ndm_log" 2>&1; then
             ndm_restore
             printf '\n  [+] %s\n' "$(ndm_t ready)" >&2
         else
@@ -149,14 +199,15 @@ if [[ $ndm_python_found == false ]] || ! python3 -c 'import sys;sys.exit(0 if sy
             exit 1
         fi
     else
+        ndm_header "$ndm_title"
         printf '  [!] %s\n' "$(ndm_t manual)" >&2
         exit 1
     fi
     trap - EXIT INT TERM
 fi
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
-if ! python3 -c 'import sys;sys.exit(0 if sys.version_info >= (3,11) else 1)'; then
-    printf '%s\n' 'Python 3.11+ required / Se necesita Python 3.11+.' >&2
+if ! ndm_find_python; then
+    printf '%s\n' 'Se necesita Python 3.11+ / Python 3.11+ required.' >&2
     exit 1
 fi
-exec python3 -P -m ndm "$@"
+exec "$ndm_python" -P -m ndm "$@"

@@ -18,8 +18,9 @@ from .dashboard import dashboard
 from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
 from .system import host_info
-from .terminal_ui import SEPARATOR, Terminal
-from .views import SERVICES, backup_rows, domain_actions, domain_summary, pair, release_rows, result_rows, support_summary
+from .terminal_ui import INFO, SEPARATOR, Terminal
+from .views import (SERVICES, backup_rows, domain_actions, domain_summary, operation_summary, pair, release_rows,
+                    result_rows, support_summary, update_rows)
 
 
 def folder(value):
@@ -57,7 +58,8 @@ class Form:
             return port(value)
         if key == 'bind':
             address = ipaddress.IPv4Address(value)
-            if not self.installed and (address.is_unspecified or self.data.get('environment') == 'vps' and not address.is_loopback):
+            if not self.installed and (address.is_unspecified or address.is_global
+                                       or self.data.get('environment') == 'vps' and not address.is_loopback):
                 raise Error(self.ui.t('initial_binding'))
             return str(address)
         if key in ('address', 'name'):
@@ -91,12 +93,13 @@ class Form:
             state = self.ui.t('pending_value' if pending else 'field_invalid' if invalid else 'field_changed' if changed else
                               'field_current' if self.installed else 'field_default')
             tone = 'warning' if pending else 'error' if invalid else 'ok' if changed else 'dim'
-            marker = '[!]' if pending else '[✗]' if invalid else '[+]'
+            # [+] marks only what this draft changed; untouched values stay neutral.
+            marker = '[!]' if pending else '[✗]' if invalid else '[+]' if changed else '[·]'
             value = self.display(key)
             room = max(4, width - column - len(state) - 10)
             if len(value) > room:
                 value = value[:room - 1] + '…'
-            label = [(marker + ' ', 'warning' if pending else 'error' if invalid else 'ok'),
+            label = [(marker + ' ', 'warning' if pending else 'error' if invalid else 'ok' if changed else 'dim'),
                      (names[key][:column - 2].ljust(column), ''),
                      (value, 'warning' if pending else 'error' if invalid else 'accent'),
                      ('  ' + state, tone + '>')]
@@ -164,10 +167,11 @@ class Form:
                                    hint=self.ui.t('field_help_' + key), default=self.original[key], preview=preview)
         if value is not None:
             self.data[key] = value
-            if key == 'environment' and value == 'vps':
-                self.data.update(bind='127.0.0.1', address='127.0.0.1')
             self.invalid = ''
             self.notice, self.notice_style = self.ui.t('field_saved', self.ui.t(key)), 'ok'
+            if key == 'environment' and value == 'vps' and (data.get('bind'), data.get('address')) != ('127.0.0.1',) * 2:
+                self.data.update(bind='127.0.0.1', address='127.0.0.1')
+                self.notice = self.ui.t('vps_loopback_set')
 
     def field_help(self, key):
         if key in self.fields:
@@ -233,6 +237,25 @@ class Controller:
 
     def pick(self, title, keys, **kwargs):
         return self.view.pick(title, [(key, self.term.t(key), '') for key in keys], **kwargs)
+
+    def menu(self, title, rows, *, help_text='', **kwargs):
+        """Submenus end with an explicit Back row; Back and Esc both return None."""
+        rows = list(rows) + [(SEPARATOR, '', ''), ('back', '← ' + self.term.t('back'), '')]
+        def describe(key):
+            if key == 'back':
+                return self.term.t('back_help')
+            return help_text(key) if callable(help_text) else help_text
+        choice = self.view.pick(title, rows, help_text=describe, **kwargs)
+        return None if choice == 'back' else choice
+
+    def notice_for(self, text, style='accent'):
+        """Show the last result inside the submenu where it happened, then forget it,
+        so the dashboard never repeats a stale «Cancelled» or «Completed»."""
+        if not self.notice:
+            return text, style
+        notice, tone = self.notice + ('\n' + text if text else ''), self.notice_style
+        self.notice = ''
+        return notice, tone
 
     def report(self, action, data=None, *, notice='', style='ok'):
         if isinstance(data, dict) and (data.get('errors') or data.get('warnings')):
@@ -324,8 +347,9 @@ class Controller:
     def domains(self):
         while True:
             cfg = self.state.load()
-            action = self.view.pick('domains', domain_actions(self.term), notice=domain_summary(self.term, cfg),
-                                    help_text=lambda key: self.term.t('domains_help_' + key))
+            notice, tone = self.notice_for(domain_summary(self.term, cfg))
+            action = self.menu('domains', domain_actions(self.term), notice=notice, notice_style=tone,
+                               help_text=lambda key: self.term.t('domains_help_' + key))
             if action is None:
                 return
             self.attempt(lambda: self.domain_action(action, cfg))
@@ -358,7 +382,8 @@ class Controller:
             self.report(action, url, notice=note)
         elif action == 'network':
             keys = ('bind', 'http_port', 'https_port')
-            form = Form(self.view, 'network', {key: cfg[key] for key in keys}, keys, installed=True)
+            # One review only: the confirmation screen after the form already lists the change.
+            form = Form(self.view, 'network', {key: cfg[key] for key in keys}, keys, installed=True, submit='apply_changes')
             while True:
                 draft = form.run()
                 if draft is None:
@@ -380,10 +405,16 @@ class Controller:
             entries = [entry for entry in cfg['domains'] if action != 'local_tls' or entry['kind'] == 'local']
             if not entries:
                 return self.report(action, self.term.t('no_addresses'), style='warning')
+            def label(entry):
+                text = access_url(cfg, entry)
+                if action == 'local_tls':
+                    # Selecting toggles: say what each address has now.
+                    text += ' · ' + self.term.t('tls_on' if entry['tls'] != 'off' else 'tls_off')
+                if entry['host'] == cfg['primary']:
+                    text += ' · ' + self.term.t('domains_current_primary')
+                return text
             name = self.view.pick(action, [
-                (entry['host'], access_url(cfg, entry) +
-                 (' · ' + self.term.t('domains_current_primary') if entry['host'] == cfg['primary'] else ''),
-                 'ok' if entry['host'] == cfg['primary'] else '') for entry in entries],
+                (entry['host'], label(entry), 'ok' if entry['host'] == cfg['primary'] else '') for entry in entries],
                 selected=next((i for i, entry in enumerate(entries) if entry['host'] == cfg['primary']), 0))
             if name is None:
                 return
@@ -402,10 +433,12 @@ class Controller:
         while True:
             paths = sorted((self.state.path / 'backups').glob('*.ndm.tar'), reverse=True)
             rows = [('create', '▶ ' + self.term.t('backup'), 'ok'), ('export', self.term.t('export'), '')]
-            rows += [(SEPARATOR, '', '')] + backup_rows(self.term, paths)
+            rows += [(SEPARATOR, '', '')] + (backup_rows(self.term, paths) or [(INFO, self.term.t('no_backups'), 'dim')])
             selected = next((i for i, row in enumerate(rows) if row[0] == focus), 0)
-            choice = self.view.pick('backups', rows, selected=selected, notice=self.term.t('backup_scope'),
-                                    help_text=self.term.t('backup_list_help'), notice_style='warning')
+            notice, tone = self.notice_for(self.term.t('backup_scope'), 'warning')
+            choice = self.menu('backups', rows, selected=selected, notice=notice, notice_style=tone,
+                               help_text=lambda key: self.term.t('export_help') if key == 'export'
+                               else self.term.t('backup_list_help'))
             if choice is None:
                 return
             if choice == 'create':
@@ -443,17 +476,26 @@ class Controller:
         info += pair(self.term, 'kind', metadata.get('kind', '—'))
         info += pair(self.term, 'size', human(stat.st_size))
         info += pair(self.term, 'file', path)
-        rows = [('info', label, tone) for label, tone in info] + [(SEPARATOR, '', '')]
-        rows += [(key, self.term.t(key), 'warning' if key == 'restore' else 'accent' if key == 'verify' else '')
-                 for key in ('verify', 'restore', 'back')]
+        rows = [(INFO, label, tone) for label, tone in info] + [(SEPARATOR, '', '')]
+        rows += [(key, ('← ' if key == 'back' else '') + self.term.t(key),
+                  'warning' if key in ('restore', 'delete_backup') else 'accent' if key == 'verify' else '')
+                 for key in ('verify', 'restore', 'delete_backup', 'back')]
         old_context = self.term.context
         self.term.context = path.name
         try:
-            action = 'info'
-            while action == 'info':
-                action = self.view.pick('backup_detail', rows, selected=len(info) + 1, notice=detail,
-                                        notice_style='ok' if verified else 'warning', help_text=self.term.t('backup_scope'))
-            if action == 'verify':
+            action = self.view.pick('backup_detail', rows, selected=len(info) + 1, notice=detail,
+                                    notice_style='ok' if verified else 'warning',
+                                    help_text=lambda key: self.term.t('delete_help' if key == 'delete_backup' else 'backup_scope'))
+            if action == 'delete_backup':
+                choice = self.view.pick('confirm_delete_backup', [
+                    ('back', '← ' + self.term.t('cancel'), 'accent'),
+                    ('delete', self.term.t('delete_backup'), 'warning')],
+                    notice=path.name, notice_style='warning', help_text=self.term.t('delete_help'))
+                if choice == 'delete':
+                    path.unlink()
+                    self.verified.pop(str(path), None)
+                    self.notice, self.notice_style = self.term.t('backup_deleted', path.name), 'ok'
+            elif action == 'verify':
                 def verify():
                     with archive.unpack(self.state, path) as (_, manifest):
                         return {'valid': True, 'version': manifest['configuration']['version'], 'excluded': manifest['excluded']}
@@ -467,17 +509,43 @@ class Controller:
         finally:
             self.term.context = old_context
 
-    def updates(self, action):
-        cfg = self.state.load()
-        available = self.view.run('lookup_updates', self.manager.checks)
-        choices = [cfg['version']] if action == 'refresh' else available['next_major' if action == 'major' else 'patches']
-        if not choices:
-            return self.report(action, available, notice=self.term.t('no_updates'), style='accent')
-        target = self.view.pick(action, [(version, f'Nextcloud {cfg["version"]} → {version}', '') for version in choices],
-                                notice=self.term.t('backup_scope'), help_text=self.term.t('updates_help'))
-        if target is None:
+    def updates(self):
+        """One screen for every update: patches, next major, image refresh and components.
+        The catalog is consulted once per visit and again after each applied change."""
+        while True:
+            cfg = self.state.load()
+            available = self.view.run('lookup_updates', self.manager.checks)
+            rows = update_rows(self.term, cfg, available)
+            if not rows:
+                self.notice = ''
+                return self.report('updates', available, notice=self.term.t('updates_none'), style='ok')
+            text = self.term.t('backup_scope')
+            if available.get('patches') and available.get('next_major'):
+                text = self.term.t('major_needs_patch') + '\n' + text
+            notice, tone = self.notice_for(text)
+            def describe(key):
+                kind = key.partition(':')[0]
+                if kind == 'major' and available.get('patches'):
+                    return self.term.t('major_needs_patch')
+                return self.term.t('components_help' if kind == 'component' else 'updates_help')
+            choice = self.menu('updates', rows, notice=notice, notice_style=tone, help_text=describe)
+            if choice is None:
+                self.notice = ''
+                return
+            self.attempt(lambda: self.apply_update(choice, cfg, available))
+
+    def apply_update(self, choice, cfg, available):
+        kind, _, target = choice.partition(':')
+        if kind == 'component':
+            return self.perform('components', lambda: self.manager.update_component(target),
+                                context=[(SERVICES[target], available['components'][target]['available'])])
+        if kind == 'major' and available.get('patches'):
+            self.notice, self.notice_style = self.term.t('major_needs_patch'), 'warning'
             return
-        if action == 'major':
+        if kind == 'refresh':
+            target = cfg['version']
+        action = {'patch': 'updates', 'major': 'major', 'refresh': 'refresh'}[kind]
+        if kind == 'major':
             plan = self.view.run('check_requirements', lambda: self.manager.database_choices(target))
             if plan['required']:
                 if not plan['choices']:
@@ -489,23 +557,59 @@ class Controller:
                     return
                 self.perform('required_database', lambda: self.manager.migrate_database(branch, for_nextcloud=target),
                              context=[('MariaDB', branch + ' LTS'), ('Nextcloud', target)])
-        self.perform(action, lambda: self.manager.update(target, major=action == 'major', refresh=action == 'refresh'),
+        self.perform(action, lambda: self.manager.update(target, major=kind == 'major', refresh=kind == 'refresh'),
                      context=[('Nextcloud', cfg['version'] + ' → ' + target)])
 
     def recover(self):
         pending = self.state.pending or {}
         if not pending:
             return self.report('recover', self.term.t('no_pending'), style='accent')
-        action = self.view.pick('recover', [('resume', self.term.t('resume'), 'accent'),
-                               ('restore', self.term.t('restore'), 'warning')],
-                               notice=' · '.join(str(value) for value in (pending.get('action', pending.get('kind', '')), pending.get('phase', ''))),
-                               help_text=self.term.t('pending'), notice_style='warning')
+        rows = [('resume', self.term.t('resume'), 'accent')]
+        # Restore needs the operation's own backup (or the original SQL volume of an LTS change).
+        if pending.get('backup') or pending.get('action') == 'db-migrate':
+            rows.append(('restore', self.term.t('restore'), 'warning'))
+        action = self.menu('recover', rows, notice=operation_summary(self.term, pending),
+                           help_text=self.term.t('pending'), notice_style='warning')
         if action is None:
             return
-        acknowledged = action == 'restore' and pending.get('traffic_opened', False)
+        # Operations whose journal proves the user files untouched restore without the acknowledgement.
+        guarded = ('update', 'migrate', 'db-update', 'component-update', 'db-migrate', 'restore')
+        acknowledged = action == 'restore' and (pending.get('traffic_opened', False) or pending.get('action') not in guarded)
         if acknowledged:
             self.view.confirm('USER-FILES-UNCHANGED')
         self.perform('recover', lambda: self.manager.recover(action, accept_user_files=acknowledged))
+
+    def logs(self):
+        service = None
+        while True:
+            roles = list(SERVICES)
+            selected = roles.index(service) if service in roles else 0
+            service = self.menu('logs', [(role, name, '') for role, name in SERVICES.items()],
+                                selected=selected, help_text=self.term.t('logs_help'))
+            if not service:
+                return
+            def show(role=service):
+                data = self.view.run('logs', lambda: Engine(self.state).dc('logs', '--no-color', '--tail', '200', role).stdout)
+                self.view.view('logs', [(line, '') for line in data.splitlines()], newest=True, horizontal=True,
+                               notice=SERVICES[role], style='accent')
+            self.attempt(show)
+
+    def maintenance(self):
+        while True:
+            enabled = self.manager.schedule_enabled()
+            rows = [('run_checks', self.term.t('run_checks'), 'ok')]
+            if enabled is not None:
+                rows += [('disable', self.term.t('disable'), 'warning') if enabled else ('enable', self.term.t('enable'), 'accent'),
+                         ('schedule_status', self.term.t('schedule_status'), '')]
+            state = self.term.t('schedule_unavailable' if enabled is None else 'schedule_on' if enabled else 'schedule_off')
+            notice, tone = self.notice_for(state)
+            selected = self.menu('maintenance', rows, notice=notice, notice_style=tone,
+                                 help_text=self.term.t('maintenance_help'))
+            if not selected:
+                return
+            lookup = {'enable': 'enable', 'disable': 'disable', 'schedule_status': 'status'}
+            self.attempt(lambda: self.perform('maintenance', self.manager.maintenance if selected == 'run_checks'
+                                              else lambda: self.manager.schedule(lookup[selected])))
 
     def action(self, action):
         if action == 'language':
@@ -515,32 +619,10 @@ class Controller:
                 self.language = selected
                 self.term.msg = messages(selected)
                 remember_language(self.state, selected)
+                self.notice, self.notice_style = self.term.t('language_changed'), 'ok'
             return
-        if action in ('install', 'domains', 'backups', 'recover'):
+        if action in ('install', 'domains', 'backups', 'recover', 'updates', 'logs', 'maintenance'):
             return getattr(self, action)()
-        if action in ('updates', 'major', 'refresh'):
-            return self.updates(action)
-        if action == 'components':
-            component = self.view.pick(action, [(role, SERVICES[role], '') for role in ('db', 'redis', 'proxy')],
-                                       notice=self.term.t('components_help'))
-            if component:
-                self.perform(action, lambda: self.manager.update_component(component))
-            return
-        if action == 'logs':
-            service = self.view.pick(action, [(role, name, '') for role, name in SERVICES.items()])
-            if service:
-                data = self.view.run(action, lambda: Engine(self.state).dc('logs', '--no-color', '--tail', '200', service).stdout)
-                self.view.view(action, [(line, '') for line in data.splitlines()], newest=True, horizontal=True,
-                               notice=SERVICES[service], style='accent')
-            return
-        if action == 'maintenance':
-            selected = self.pick(action, ('run_checks', 'enable', 'disable', 'schedule_status'),
-                                 help_text=self.term.t('maintenance_help'))
-            if selected:
-                lookup = {'enable': 'enable', 'disable': 'disable', 'schedule_status': 'status'}
-                self.perform(action, self.manager.maintenance if selected == 'run_checks'
-                             else lambda: self.manager.schedule(lookup[selected]))
-            return
         if action == 'self_update':
             source = self.view.edit('source', '', folder, hint=self.term.t('self_update_help'))
             if source:
@@ -548,10 +630,10 @@ class Controller:
             return
         if action == 'setup':
             return self.perform(action, self.manager.setup_check)
-        if action == 'backup':
-            return self.perform(action, self.manager.backup)
         if action == 'stop':
-            choice = self.pick('confirm_stop', ('back', 'stop'), notice=self.term.t('stop_help'), notice_style='warning')
+            choice = self.view.pick('confirm_stop', [('back', '← ' + self.term.t('back'), 'accent'),
+                                                     ('stop', self.term.t('stop'), 'warning')],
+                                    notice=self.term.t('stop_help'), notice_style='warning')
             if choice != 'stop':
                 return
         from .cli import dispatch

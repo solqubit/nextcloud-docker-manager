@@ -82,6 +82,7 @@ def parser():
     child.add_argument('path')
     child = sub.add_parser('schedule')
     child.add_argument('action', choices=['enable', 'disable', 'status'])
+    child.add_argument('--confirm')
     child = sub.add_parser('update-component')
     child.add_argument('component', choices=['db', 'redis', 'proxy'])
     child.add_argument('--confirm')
@@ -151,7 +152,7 @@ def dispatch(manager, args):
         return manager.settings(cfg, args.confirm)
     if command == 'start':
         if state.pending:
-            raise Error('Pending operation: use recover')
+            raise Error('Hay una operación pendiente: usa Recuperar / Pending operation: use recover')
         engine.up('db', 'redis', 'app', 'proxy', 'cron')
         return engine.wait_app(installed=engine.cfg['status'] == 'ready')
     if command == 'stop':
@@ -169,7 +170,7 @@ def dispatch(manager, args):
     if command == 'maintenance':
         return manager.maintenance()
     if command == 'schedule':
-        return manager.schedule(args.action)
+        return manager.schedule(args.action, args.confirm)
     if command == 'update-component':
         return manager.update_component(args.component, args.confirm)
     if command == 'migrate-db':
@@ -210,12 +211,17 @@ def main(argv=None):
         manager = Manager(state)
         if interactive:
             menu(manager, language, console)
-        elif console:
+            return 0
+        if console:
             from .screens import Controller
             result = console.run(args.command, lambda: dispatch(manager, args))
             Controller(manager, language, console).report(args.command, result, style='accent')
         else:
-            show(dispatch(manager, args))
+            result = dispatch(manager, args)
+            show(result)
+        # The scheduled health check must fail visibly in systemd when it finds problems.
+        if args.command == 'maintenance' and isinstance(result, dict) and result.get('errors'):
+            return 2
         return 0
     except EOFError:
         return 0

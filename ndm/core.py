@@ -77,7 +77,7 @@ def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError) as exc:
-        raise Error(f'Cannot read configuration / No se puede leer: {path}') from exc
+        raise Error(f'No se puede leer: {path} / Cannot read configuration: {path}') from exc
 
 
 def atomic(path, value, mode=0o600):
@@ -121,7 +121,7 @@ def confirm(expected, supplied=None, message=''):
     if supplied == expected:
         return
     if supplied is not None or not sys.stdin.isatty():
-        raise Error(f'Confirmation required / Confirmación requerida: --confirm {expected}')
+        raise Error(f'Confirmación requerida: --confirm {expected} / Confirmation required: --confirm {expected}')
     if _presentation is not None:
         return _presentation.confirm(expected, message)
     print(message or expected)
@@ -150,7 +150,7 @@ class State:
                 if read_json(marker) != {'application': 'solqubit.nextcloud-docker-manager', 'format': 1}:
                     raise Error('State directory belongs to another application')
             elif names and not legacy and names != {'data'}:
-                raise Error('Choose a new empty state directory; existing files were preserved')
+                raise Error('Elige una carpeta de estado nueva y vacía; los archivos existentes se conservan / Choose a new empty state directory; existing files were preserved')
         self.path.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.path, 0o700)
         atomic(self.path / 'owner.json', {'application': 'solqubit.nextcloud-docker-manager', 'format': 1})
@@ -261,21 +261,24 @@ class Runner:
     def __init__(self, state=None):
         self.state = state
 
-    def run(self, args, *, check=True, input=None, timeout=600, quiet=False):
+    def run(self, args, *, check=True, input=None, timeout=600, quiet=False, env=None):
         if _presentation is not None:
             _presentation.command(args)
         # Never shell=True; command data and credentials are never evaluated as code.
         try:
-            result = subprocess.run([str(x) for x in args], input=input, capture_output=True,
-                                    timeout=timeout, text=not isinstance(input, bytes))
+            result = subprocess.run([str(x) for x in args], input=input.encode() if isinstance(input, str) else input,
+                                    capture_output=True, timeout=timeout, env={**os.environ, **env} if env else None)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise Error(f'Command failed / Falló el comando: {args[0]} ({type(exc).__name__})') from exc
-        stdout = result.stdout.decode(errors='replace') if isinstance(result.stdout, bytes) else result.stdout
-        stderr = result.stderr.decode(errors='replace') if isinstance(result.stderr, bytes) else result.stderr
+            raise Error(f'Falló el comando / Command failed: {args[0]} ({type(exc).__name__})') from exc
+        # Decode leniently: logs and occ output may contain invalid UTF-8.
+        stdout = result.stdout.decode(errors='replace')
+        stderr = result.stderr.decode(errors='replace')
         if self.state and self.state.log:
             # Arguments may contain environment values; record output, not argv.
+            # Inspect output includes container environments (passwords), so it is never logged.
+            secret = quiet or 'inspect' in [str(x) for x in args[:4]]
             with self.state.log.open('a', encoding='utf-8') as out:
-                out.write(stdout + stderr)
+                out.write(('[output omitted: may contain credentials]\n' if secret else stdout) + stderr)
         if check and result.returncode:
             detail = (stderr or stdout)[-2200:]
             raise Error(f'{args[0]}: {detail}')

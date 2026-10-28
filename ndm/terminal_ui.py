@@ -15,6 +15,9 @@ except ImportError:
 
 MARKERS = {'ok': '[+]', 'warning': '[!]', 'error': '[✗]', 'accent': '[*]'}
 SEPARATOR = '\0separator'
+# Read-only lines inside a menu (such as backup metadata): drawn, never selected.
+INFO = '\0info'
+PASSIVE = (SEPARATOR, INFO)
 
 
 def plain(label):
@@ -228,23 +231,27 @@ class Terminal:
     def menu(self, title, rows, selected=0, notice='', help_text='', search=False,
              notice_style='accent'):
         """Rows are (value, label, semantic color); return a value or None on Back.
-        Rows whose value is SEPARATOR are drawn as a rule and never selected."""
+        Rows whose value is SEPARATOR are drawn as a rule and INFO rows as text;
+        neither can be selected."""
         if not rows:
             return None
         selected = max(0, min(selected, len(rows) - 1))
         if self.screen is None:
-            choices = [row for row in rows if row[0] != SEPARATOR]
+            choices = [row for row in rows if row[0] not in PASSIVE]
             current = rows[selected][0]
             print('\n[?] ' + title, file=sys.stderr)
             if notice:
                 print(notice, file=sys.stderr)
+            for value, label, _ in rows:
+                if value == INFO:
+                    print('     ' + plain(label), file=sys.stderr)
             for number, (_, label, _) in enumerate(choices, 1):
                 print(f'  {number}) {plain(label)}', file=sys.stderr)
             while True:
                 answer = input(self.t('setup_plain_choice'))
                 if answer.lower() in ('b', 'back', 'volver'):
                     return None
-                if answer == '' and current == SEPARATOR:
+                if answer == '' and current in PASSIVE:
                     current = choices[0][0]
                 if answer == '':
                     return current
@@ -257,11 +264,11 @@ class Terminal:
         query = ''
         step = 1
         while True:
-            filtered = [row for row in rows if row[0] == SEPARATOR and not query
-                        or row[0] != SEPARATOR and query.casefold() in plain(row[1]).casefold()]
+            filtered = [row for row in rows if row[0] in PASSIVE and not query
+                        or row[0] not in PASSIVE and query.casefold() in plain(row[1]).casefold()]
             selected = max(0, min(selected, len(filtered) - 1))
-            if any(row[0] != SEPARATOR for row in filtered):
-                while filtered[selected][0] == SEPARATOR:
+            if any(row[0] not in PASSIVE for row in filtered):
+                while filtered[selected][0] in PASSIVE:
                     selected = (selected + step) % len(filtered)
             note = self.t('setup_search', query) if search and query else notice
             top, height = self.frame(title, note, notice_style)
@@ -272,11 +279,11 @@ class Terminal:
                 if value == SEPARATOR:
                     self.put(top + index - offset, self.left + 2, '┄' * (self.width - 4), 'dim')
                     continue
-                self.draw_label(top + index - offset, label, style, index == selected)
+                self.draw_label(top + index - offset, label, style, index == selected and value != INFO)
             if not filtered:
                 self.put(top, self.left, self.t('setup_no_matches'), 'warning')
             self.put(height - 4, self.left, '─' * self.width, 'accent')
-            choices = [i for i, row in enumerate(filtered) if row[0] != SEPARATOR]
+            choices = [i for i, row in enumerate(filtered) if row[0] not in PASSIVE]
             help_value = help_text(filtered[selected][0]) if callable(help_text) and choices else '' if callable(help_text) else help_text
             for row, line in enumerate(textwrap.wrap(help_value, self.width)[:2], height - 3):
                 self.put(row, self.left, line)

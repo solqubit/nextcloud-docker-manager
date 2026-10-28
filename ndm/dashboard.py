@@ -7,15 +7,17 @@ from .views import support_summary
 
 GROUPS = [
     ('group_service', ('status', 'setup', 'start', 'stop', 'logs')),
-    ('group_updates', ('updates', 'major', 'refresh', 'components')),
-    ('group_data', ('backup', 'backups', 'maintenance', 'recover')),
+    ('group_data', ('updates', 'backups', 'recover')),
     ('group_settings', ('domains', 'language')),
-    ('group_manager', ('diagnose', 'self_update', 'exit')),
+    ('group_checks', ('maintenance', 'diagnose')),
+    ('group_manager', ('self_update', 'exit')),
 ]
-STYLES = {'stop': 'warning', 'recover': 'warning', 'exit': 'accent'}
+STYLES = {'stop': 'warning', 'recover': 'warning', 'setup': 'ok', 'exit': 'accent'}
+# With an interrupted operation only recovery and read-only actions make sense.
+PENDING = {'recover', 'status', 'stop', 'logs', 'backups', 'maintenance', 'diagnose', 'language', 'self_update', 'exit'}
 
 
-def layout(ui, pending=False, configured=True):
+def layout(ui, pending=False, configured=True, web_setup=False):
     groups = GROUPS if configured else [('group_install', ('install', 'language', 'exit'))]
     if not configured and pending:
         groups = [('group_install', ('recover', 'install', 'language', 'exit'))]
@@ -24,11 +26,14 @@ def layout(ui, pending=False, configured=True):
     for column, entries in enumerate(columns):
         row = 0
         for title, actions in entries:
+            visible = [value for value in actions
+                       if (value != 'recover' or pending) and (value != 'setup' or web_setup)
+                       and (not pending or not configured or value in PENDING)]
+            if not visible:
+                continue
             headers.append((column, row, ui.t(title)))
             row += 1
-            for value in actions:
-                if value == 'recover' and not pending:
-                    continue
+            for value in visible:
                 cells.append(dict(value=value, label=ui.t(value), column=column, row=row))
                 row += 1
     return cells, headers, len(columns)
@@ -48,6 +53,8 @@ def switch(cells, selected, columns):
 def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=None):
     configured, pending = state.configured, bool(state.pending)
     cfg = state.load() if configured else {}
+    # «Check web installation» is only offered, and preselected, until it has completed.
+    web_setup = configured and cfg['status'] != 'ready'
     if configured:
         ui.context = f'Nextcloud {cfg["version"]} · MariaDB {cfg["images"]["db"].split("@")[0].split(":")[-1]}'
         app = (status or {}).get('status', {})
@@ -73,20 +80,20 @@ def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=No
             tone = 'error'
     if ui.screen is None:
         ui.width = 76
-        cells, _, _ = layout(ui, pending, configured)
+        cells, _, _ = layout(ui, pending, configured, web_setup)
         return ui.menu(ui.t('menu'), [(cell['value'], cell['label'], STYLES.get(cell['value'], ''))
                                      for cell in cells], notice=notice or summary)
     selected = None
     while True:
         ui.measure()
         top, height = ui.frame(ui.t('menu'), summary[:ui.width - 4], tone)
-        cells, headers, columns = layout(ui, pending, configured)
+        cells, headers, columns = layout(ui, pending, configured, web_setup)
         if not configured and ui.width >= 66 and height >= 24:
             for n, line in enumerate(BANNER):
                 ui.put(top + n, ui.left, line, 'title')
             top += len(BANNER) + 1
         if selected is None or selected >= len(cells):
-            initial = 'recover' if pending else last
+            initial = 'recover' if pending else 'setup' if web_setup else last
             selected = next((i for i, cell in enumerate(cells) if cell['value'] == initial), 0)
         width = ui.width // columns
         visible = max(1, height - top - 3)
@@ -107,14 +114,21 @@ def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=No
             ui.put(height - 2, ui.left, marker + ' ' + notice, notice_style)
         else:
             ui.put(height - 2, ui.left, '[*] ' + ui.t('desc_' + cells[selected]['value']), 'dim')
-        ui.put(height - 1, ui.left, ui.t('dashboard_keys' if columns > 1 else 'setup_keys'), 'accent')
+        legend = ui.t('dashboard_keys' if columns > 1 else 'menu_keys')
+        ui.put(height - 1, ui.left, legend if len(legend) <= ui.width else ui.t('menu_keys_short'), 'accent')
         ui.screen.refresh()
         key = ui.key()
         notice = ''
         if key in ('\n', '\r', curses.KEY_ENTER):
             return cells[selected]['value']
         if key == '\x1b':
-            return 'exit'
+            # Esc means «back» everywhere else; here the first press only moves to Exit,
+            # so repeated Esc presses from a submenu never close the manager by accident.
+            exit_cell = next(i for i, cell in enumerate(cells) if cell['value'] == 'exit')
+            if selected == exit_cell:
+                return 'exit'
+            selected = exit_cell
+            notice, notice_style = ui.t('exit_confirm_hint'), 'accent'
         if key == curses.KEY_DOWN:
             selected = move(cells, selected, 1)
         elif key == curses.KEY_UP:

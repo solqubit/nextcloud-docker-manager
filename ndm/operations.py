@@ -1,6 +1,7 @@
 """Installation, reversible settings, SQL rehearsal and guarded upgrade recovery."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import ipaddress
 import json
@@ -16,7 +17,7 @@ from .catalog import Catalog
 from .config import access_url, compose, host, initial, port, prefer_first_tunnel, public_host, validate
 from .core import Error, Runner, State, atomic, confirm, human, read_json, stage, stamp, version_tuple
 from .docker import Engine
-from .maintenance import Maintenance
+from .maintenance import Maintenance, component_series
 from .database import DatabaseMigration
 
 
@@ -37,7 +38,7 @@ class Manager(Maintenance, DatabaseMigration):
             reserved = candidate.supernet(prefixlen_diff=1)
             if not any(reserved.overlaps(n) for n in networks if n.version == 4):
                 return str(candidate)
-        raise Error('No private subnet available')
+        raise Error('No hay una subred privada libre / No private subnet available')
 
     def install(self, version=None, *, supplied=None, database_series='11.4', **settings):
         if self.state.configured:
@@ -48,13 +49,20 @@ class Manager(Maintenance, DatabaseMigration):
             self.catalog.require_supported(version)
             images = {'app': self.catalog.resolve('nextcloud', version + '-apache')}
             if database_series not in self.catalog.maintained_databases()['branches']:
-                raise Error('Selected MariaDB LTS is not under Community maintenance')
+                raise Error('La LTS de MariaDB elegida no tiene mantenimiento Community / Selected MariaDB LTS is not under Community maintenance')
             for role, repo, series in (('db', 'mariadb', database_series), ('redis', 'redis', '7.4'), ('proxy', 'caddy', '2')):
                 images[role] = self.catalog.resolve(repo, self.catalog.latest(repo, series))
             required = self.catalog.compatible(version, images['db'])
         cfg = initial(version, images, subnet=self.new_subnet(), **settings)
-        if cfg['bind'] == '0.0.0.0' or (cfg['environment'] == 'vps' and not ipaddress.ip_address(cfg['bind']).is_loopback):
-            raise Error('Complete the first web setup on loopback/private LAN; publish ports only after creating the administrator')
+        bind = ipaddress.ip_address(cfg['bind'])
+        if bind.is_unspecified or (cfg['environment'] == 'vps' and not bind.is_loopback):
+            raise Error('En una VPS la primera configuración usa 127.0.0.1 y un túnel SSH; publica los puertos después de crear '
+                        'el administrador / On a VPS the first setup uses 127.0.0.1 and an SSH tunnel; publish ports '
+                        'after creating the administrator')
+        if bind.is_global:
+            # Until the administrator exists, whoever opens the web installer owns the instance.
+            raise Error('La IP %s es pública: elige VPS (127.0.0.1 + túnel SSH) o una IP privada de la LAN / '
+                        'IP %s is public: choose VPS (127.0.0.1 + SSH tunnel) or a private LAN IP' % (bind, bind))
         print(f"Nextcloud {version}; {cfg['environment']}; {access_url(cfg)}; storage: {cfg['storage']}")
         print(required['source'])
         confirm('INSTALL', supplied)
@@ -65,7 +73,7 @@ class Manager(Maintenance, DatabaseMigration):
         php = engine.runner.run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'php', images['app'], '-r',
                                  'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;']).stdout.strip()
         if php not in required['php']:
-            raise Error('Target PHP is not in the documented requirements')
+            raise Error('La versión de PHP de la imagen no está en los requisitos documentados / Target PHP is not in the documented requirements')
         revision = self.state.revision(cfg)
         engine = Engine(self.state, cfg, revision)
         engine.validate()
@@ -89,7 +97,7 @@ class Manager(Maintenance, DatabaseMigration):
             print('[*] Pendiente de configuración web / Awaiting web setup: ' + access_url(engine.cfg))
             return status
         if self.state.pending:
-            raise Error('Use recover before completing an interrupted operation')
+            raise Error('Usa Recuperar antes de completar una operación interrumpida / Use recover before completing an interrupted operation')
         engine.verify(configure_cron=True)
         cfg = engine.cfg
         moved_logs = engine.put_managed()
@@ -132,7 +140,31 @@ class Manager(Maintenance, DatabaseMigration):
         status = engine.status()
         if not status.get('installed') or status.get('maintenance') or status.get('needsDbUpgrade'):
             raise Error('Completa la instalación o recupera mantenimiento antes de continuar / Nextcloud not ready')
+        if engine.cfg['status'] != 'ready':
+            # finish() marks the installation ready; running it first would skip the initial repairs.
+            raise Error('Primero elige «Comprobar instalación web» / First run «Check web installation»')
         return engine
+
+    def reopen(self):
+        """Before 'applying' the live SQL is untouched: return to the previous revision."""
+        with stage('Restablecer el servicio sin cambios / Restore the service unchanged'):
+            self.state.activate(self.state.pending['source'])
+            Engine(self.state).put_managed()
+            self.finish()
+            self.state.done()
+
+    @contextlib.contextmanager
+    def reopen_on_failure(self):
+        """A failed backup or rehearsal must not leave Nextcloud in maintenance mode.
+        Interruptions (Ctrl+C) and unknown failures keep the journal for Recover."""
+        try:
+            yield
+        except (Error, OSError) as exc:
+            try:
+                self.reopen()
+            except BaseException:
+                pass
+            raise exc
 
     def gate(self, enabled):
         cfg = self.state.load()
@@ -190,25 +222,26 @@ class Manager(Maintenance, DatabaseMigration):
                     and status.get('versionstring') == engine.cfg['version'] and engine.serving()):
                 return status
             if status.get('container') in ('exited', 'dead'):
-                raise Error('Migration container stopped; inspect logs / La migración se detuvo')
+                raise Error('La migración se detuvo; revisa los registros / Migration container stopped; inspect logs')
             time.sleep(3)
-        raise Error('Migration did not finish; maintenance is preserved')
+        raise Error('La migración no terminó; se conserva el modo mantenimiento / Migration did not finish; maintenance is preserved')
 
     def backup(self, supplied=None):
-        self.ready()
-        confirm('BACKUP', supplied, 'SQL + application + certificates; USER FILES EXCLUDED / ARCHIVOS DE USUARIOS EXCLUIDOS')
+        live = self.ready()
+        confirm('BACKUP', supplied, 'SQL + aplicación + certificados; ARCHIVOS DE USUARIOS EXCLUIDOS / '
+                                    'SQL + application + certificates; USER FILES EXCLUDED')
+        # Check space while Nextcloud is still online.
+        archive.preflight(live)
         self.state.begin('backup', source=str((self.state.path / 'current').resolve()))
-        try:
+        # Known failures reopen the unchanged service; interruptions keep the journal for Recover.
+        with self.reopen_on_failure():
             with stage('Respaldo SQL y aplicación / SQL and application backup'):
                 engine = self.quiesce()
                 path = archive.create(engine)
             self.state.phase('backup-complete', backup=str(path))
-            self.finish()
-            self.state.done()
-            return path
-        except BaseException:
-            # The journal is deliberate: never silently open traffic after an unknown failure.
-            raise
+        self.finish()
+        self.state.done()
+        return path
 
     def settings(self, cfg, supplied=None):
         old_engine = self.ready()
@@ -253,7 +286,7 @@ class Manager(Maintenance, DatabaseMigration):
             cfg['primary'] = name
         if publish_direct:
             if mode != 'direct':
-                raise Error('Publishing TCP 80/443 requires direct-domain mode')
+                raise Error('Publicar TCP 80/443 requiere el modo dominio directo / Publishing TCP 80/443 requires direct-domain mode')
             cfg.update(bind='0.0.0.0', http_port=80, https_port=443)
         self.settings(cfg, supplied)
         return cfg
@@ -263,7 +296,7 @@ class Manager(Maintenance, DatabaseMigration):
         cfg = self.state.load()
         remaining = [e for e in cfg['domains'] if e['host'] != host(name)]
         if len(remaining) == len(cfg['domains']):
-            raise Error('Address not found')
+            raise Error('Dirección no encontrada / Address not found')
         if not remaining:
             raise Error('No se puede quitar la última dirección / Cannot remove the last address')
         if not any(e['kind'] == 'local' for e in remaining):
@@ -273,7 +306,7 @@ class Manager(Maintenance, DatabaseMigration):
                     if not json.load(response).get('installed'):
                         raise ValueError('Not installed')
             except (OSError, ValueError) as exc:
-                raise Error('Verify the public HTTPS address before removing the last local access address') from exc
+                raise Error('Verifica la dirección HTTPS pública antes de quitar el último acceso local / Verify the public HTTPS address before removing the last local access address') from exc
         # Probe an existing alternative before retiring the access address.
         result = json.loads(Engine(self.state).probe_http(remaining[0]))
         if not result[0] or result[0][0].split()[1] not in ('200', '308'):
@@ -294,7 +327,7 @@ class Manager(Maintenance, DatabaseMigration):
         components = {}
         for role, repo in (('db', 'mariadb'), ('redis', 'redis'), ('proxy', 'caddy')):
             installed = cfg['images'][role].split(':', 1)[1].split('@')[0]
-            latest = self.catalog.latest(repo, '.'.join(installed.split('.')[:2]))
+            latest = self.catalog.latest(repo, component_series(role, installed))
             components[role] = {'current': installed, 'available': latest,
                                 'image_changed': cfg['images'][role] != self.catalog.resolve(repo, latest)}
         return {'current': cfg['version'], 'support': self.catalog.support_status(cfg['version']),
@@ -350,7 +383,7 @@ class Manager(Maintenance, DatabaseMigration):
                 enabled = json.loads(engine.occ('app:list', '--output=json').stdout)['enabled']
                 disabled = set(manifest.get('enabled_apps', {})) - set(enabled)
                 if disabled:
-                    raise Error('Target would disable installed apps; review compatibility first: ' + ', '.join(sorted(disabled)))
+                    raise Error('El destino desactivaría aplicaciones instaladas; revisa su compatibilidad: %s / Target would disable installed apps; review compatibility first: %s' % ((', '.join(sorted(disabled)),) * 2))
                 success = True
                 atomic(self.state.path / 'cache' / 'last-rehearsal.json', {
                     'source': manifest['configuration']['version'], 'target': target,
@@ -383,14 +416,20 @@ class Manager(Maintenance, DatabaseMigration):
 
     @staticmethod
     def wait_database(engine):
+        # The image's healthcheck (--innodb_initialized) stays unhealthy while the entrypoint
+        # runs its temporary init server, so an import never starts against that server.
         until = time.monotonic() + 300
         while time.monotonic() < until:
-            try:
-                engine.sql('SELECT 1;')
-                return
-            except Error:
-                time.sleep(3)
-        raise Error('Database initialization timed out')
+            cid = engine.container('db', required=False)
+            info = engine.inspect('container', cid) if cid else None
+            if info and info['State'].get('Health', {}).get('Status') == 'healthy':
+                try:
+                    engine.sql('SELECT 1;')
+                    return
+                except Error:
+                    pass
+            time.sleep(3)
+        raise Error('La base de datos no se inició a tiempo / Database initialization timed out')
 
     def update(self, target=None, *, major=False, refresh=False, supplied=None):
         source_engine = self.ready()
@@ -406,11 +445,11 @@ class Manager(Maintenance, DatabaseMigration):
         dest = version_tuple(target)
         if major:
             if dest[0] != current[0] + 1:
-                raise Error('Major upgrades must be sequential / No se pueden saltar ramas')
+                raise Error('No se pueden saltar ramas mayores / Major upgrades must be sequential')
             if self.catalog.patches(current[0])[0] != cfg['version']:
-                raise Error('Install the latest patch of the current major first')
+                raise Error('Aplica primero el último parche de la rama actual / Install the latest patch of the current major first')
         elif not refresh and (dest <= current or dest[:2] != current[:2]):
-            raise Error('Only later patches in the same X.Y series; use migrate for a major')
+            raise Error('Solo parches posteriores de la misma rama X.Y; usa la versión mayor para cambiar de rama / Only later patches in the same X.Y series; use migrate for a major')
         required = self.catalog.compatible(target, cfg['images']['db'])
         image = self.catalog.resolve('nextcloud', target + '-apache')
         if refresh and image == cfg['images']['app']:
@@ -428,16 +467,18 @@ class Manager(Maintenance, DatabaseMigration):
             php = new.runner.run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'php', image,
                 '-r', 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;']).stdout.strip()
             if php not in required['php']:
-                raise Error('PHP requirement mismatch')
+                raise Error('La versión de PHP no cumple los requisitos / PHP requirement mismatch')
+        archive.preflight(source_engine)
         self.state.begin('migrate' if major else 'update', source=str((self.state.path / 'current').resolve()),
                          target_version=target, target_image=image)
-        with stage('Respaldo consistente / Consistent backup'):
-            stopped = self.quiesce()
-            backup = archive.create(stopped, 'pre-update')
-            self.state.phase('backed-up', backup=str(backup))
-        with stage('Ensayar SQL y aplicación sin archivos de usuarios / Rehearse SQL without user files'):
-            self.rehearse(backup, target, image)
-        self.state.phase('rehearsed', backup=str(backup))
+        with self.reopen_on_failure():
+            with stage('Respaldo consistente / Consistent backup'):
+                stopped = self.quiesce()
+                backup = archive.create(stopped, 'pre-update')
+                self.state.phase('backed-up', backup=str(backup))
+            with stage('Ensayar SQL y aplicación sin archivos de usuarios / Rehearse SQL without user files'):
+                self.rehearse(backup, target, image)
+            self.state.phase('rehearsed', backup=str(backup))
         revision = self.state.revision(changed)
         new = Engine(self.state, changed, revision)
         new.validate()
@@ -457,15 +498,15 @@ class Manager(Maintenance, DatabaseMigration):
                    and (operation['action'] in ('update', 'migrate', 'db-update', 'component-update')
                         or operation.get('accept_user_files') or operation.get('phase') == 'restoring'))
         if not guarded and not accept_user_files:
-            raise Error('User files are not restored. Review consistency and use --accept-user-files-state')
+            raise Error('Los archivos de usuarios no se restauran; confirma su coherencia (--accept-user-files-state) / User files are not restored. Review consistency and use --accept-user-files-state')
         confirm('RESTORE', supplied, 'SQL + aplicación anteriores. Los archivos de usuarios permanecen / User files remain in place')
         with archive.unpack(self.state, path) as (work, manifest):
             saved = manifest['configuration']
             if saved['id'] != current['id']:
-                raise Error('Backup belongs to a different installation')
+                raise Error('El respaldo pertenece a otra instalación / Backup belongs to a different installation')
             estimate = sum(x['bytes'] for x in manifest['files'].values()) + manifest['sql_estimated_bytes'] * 2
             if shutil.disk_usage(self.state.path).free < estimate:
-                raise Error('Insufficient restore staging space')
+                raise Error('Espacio insuficiente para preparar la restauración / Insufficient restore staging space')
             if not operation:
                 self.state.begin('restore', backup=str(Path(path)), accept_user_files=accept_user_files,
                                  source=str((self.state.path / 'current').resolve()))
@@ -481,6 +522,10 @@ class Manager(Maintenance, DatabaseMigration):
             # Never replace the live user-file volume with an empty volume from an archive.
             cfg['volumes']['data'] = current['volumes']['data']
             cfg['data_device'] = current['data_device']
+            if 'data_fsid' in current:
+                cfg['data_fsid'] = current['data_fsid']
+            else:
+                cfg.pop('data_fsid', None)
             revision = self.state.revision(cfg)
             engine = Engine(self.state, cfg, revision)
             engine.pull()
@@ -507,12 +552,12 @@ class Manager(Maintenance, DatabaseMigration):
             if operation['action'] == 'db-migrate':
                 return self.rollback_database(supplied, accept_user_files=accept_user_files)
             if not operation.get('backup'):
-                raise Error('No recovery backup available')
+                raise Error('No hay respaldo de recuperación / No recovery backup available')
             return self.restore(operation['backup'], supplied=supplied, recovery=True, accept_user_files=accept_user_files)
         if operation['phase'] == 'restoring':
-            raise Error('Interrupted SQL restore: use recover --action restore to restart into fresh volumes')
+            raise Error('Restauración SQL interrumpida: usa Recuperar → Restaurar para repetirla en volúmenes nuevos / Interrupted SQL restore: use recover --action restore to restart into fresh volumes')
         if operation['action'] == 'db-migrate' and operation['phase'] in ('db-initializing', 'db-importing', 'db-rolling-back'):
-            raise Error('Incomplete LTS import: use recover --action restore to restart the original SQL volume safely')
+            raise Error('Importación LTS incompleta: usa Recuperar → Restaurar para volver al volumen SQL original / Incomplete LTS import: use recover --action restore to restart the original SQL volume safely')
         confirm('RESUME', supplied)
         if operation['action'] == 'install':
             engine = Engine(self.state)
@@ -537,7 +582,7 @@ class Manager(Maintenance, DatabaseMigration):
         until = time.monotonic() + 900
         while not engine.serving():
             if time.monotonic() > until:
-                raise Error('Image entrypoint is not ready; inspect app logs before retrying')
+                raise Error('La imagen no terminó de iniciar; revisa los registros de Nextcloud / Image entrypoint is not ready; inspect app logs before retrying')
             time.sleep(3)
         if engine.status().get('needsDbUpgrade'):
             engine.occ('upgrade', '--no-interaction', timeout=1800)
@@ -545,16 +590,9 @@ class Manager(Maintenance, DatabaseMigration):
         self.state.done()
 
     def prune_backups(self):
+        """Keep the newest automatic pre-update backups; manual backups are the user's to delete."""
         keep = self.state.load().get('retention', 3)
-        candidates = sorted((self.state.path / 'backups').glob('*.ndm.tar'))
-        automatic = []
-        for path in candidates:
-            with __import__('tarfile').open(path) as archive_file:
-                member = archive_file.getmember('manifest.json')
-                if member.size > 1024 * 1024:
-                    continue
-                meta = json.load(archive_file.extractfile(member))
-            if meta.get('kind') == 'pre-update':
-                automatic.append(path)
+        automatic = [path for path in sorted((self.state.path / 'backups').glob('*.ndm.tar'))
+                     if archive.backup_kind(path) == 'pre-update']
         for path in automatic[:-keep]:
             path.unlink()
