@@ -59,7 +59,7 @@ class Suite:
             response = exc
         return response.status, response.headers, response.read()
 
-    def prepare(self):
+    def prepare(self, *, complete_setup=True):
         if not self.engine.status().get('installed'):
             credentials = {'user': 'ndm-test-admin', 'password': secrets.token_urlsafe(28)}
             atomic(self.credentials, credentials)
@@ -70,7 +70,8 @@ class Suite:
                 dict(install='true', adminlogin=credentials['user'], adminpass=credentials['password'], requesttoken=token))
             assert code in (200, 302, 303), f'Web setup HTTP {code}'
         self.engine.wait_app()
-        self.manager.setup_check()
+        if complete_setup:
+            self.manager.setup_check()
         self.opener = urllib.request.build_opener(NoRedirect)
         user = read_json(self.credentials)['user']
         path = f'/remote.php/dav/files/{user}/ndm-preserved.txt'

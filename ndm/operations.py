@@ -132,15 +132,25 @@ class Manager(Maintenance, DatabaseMigration):
                 'status': engine.status(), 'operation': self.state.pending,
                 'services': services, 'support': self.catalog.support_status(engine.cfg['version'])}
 
-    def ready(self):
+    def ready(self, *, complete_setup=False):
         if self.state.pending:
             raise Error('Operación pendiente; usa recover / Pending operation; use recover')
         engine = Engine(self.state)
         engine.check_mount()
         status = engine.status()
-        if not status.get('installed') or status.get('maintenance') or status.get('needsDbUpgrade'):
+        if not status.get('installed'):
+            url = access_url(engine.cfg)
+            raise Error(f'Completa la instalación web y crea el administrador en {url} / '
+                        f'Complete web setup and create the administrator at {url}')
+        if status.get('maintenance') or status.get('needsDbUpgrade'):
             raise Error('Completa la instalación o recupera mantenimiento antes de continuar / Nextcloud not ready')
         if engine.cfg['status'] != 'ready':
+            if complete_setup:
+                # The administrator already exists. Complete the manager's checks,
+                # then reload and validate the resulting revision before backing up.
+                with stage('Comprobar instalación web / Check web installation'):
+                    self.setup_check()
+                return self.ready()
             # finish() marks the installation ready; running it first would skip the initial repairs.
             raise Error('Primero elige «Comprobar instalación web» / First run «Check web installation»')
         return engine
@@ -227,9 +237,9 @@ class Manager(Maintenance, DatabaseMigration):
         raise Error('La migración no terminó; se conserva el modo mantenimiento / Migration did not finish; maintenance is preserved')
 
     def backup(self, supplied=None):
-        live = self.ready()
         confirm('BACKUP', supplied, 'SQL + aplicación + certificados; ARCHIVOS DE USUARIOS EXCLUIDOS / '
                                     'SQL + application + certificates; USER FILES EXCLUDED')
+        live = self.ready(complete_setup=True)
         # Check space while Nextcloud is still online.
         archive.preflight(live)
         self.state.begin('backup', source=str((self.state.path / 'current').resolve()))

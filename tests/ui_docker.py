@@ -64,23 +64,28 @@ def main():
         assert cfg['version'] == target and cfg['storage'] == 'named' and cfg['bind'] == '127.0.0.1'
         assert not Engine(opened).status()['installed']
         suite = Suite(opened)
-        suite.prepare()
-        suite.logging_health()
+        # Reproduce a user creating the web administrator and going straight to Backup.
+        suite.prepare(complete_setup=False)
+        assert opened.load()['status'] == 'awaiting-web'
+        assert opened.load()['initial_maintenance_pending'] is True
         opened.lock_file.close()
         opened = None
         print('[PASS] Real terminal installer, exact official images, local web setup and authenticated WebDAV')
         active = launch()
-        active.send(b'\r', 'Configuración web')
-        active.capture('live-04-services')
-        active.send(b'\x1b', 'Administrar Nextcloud')
-        # Backups is the sixth dashboard action (status, start, stop, logs, updates, backups).
-        active.send(b'\x1bOH' + b'\t' * 5 + b'\r', 'Selecciona un respaldo')
+        assert 'Comprobar instalación web' in '\n'.join(active.screen.display)
+        active.capture('live-04-pending-setup')
+        # The pending setup action precedes start/stop, so Backups is seventh here.
+        active.send(b'\x1bOH' + b'\t' * 6 + b'\r', 'Selecciona un respaldo')
         active.send(b'\r', 'Revisar y confirmar')
         active.send(b'\x1bOB\r', 'Respaldo SQL y aplicación')
         active.read(0.4)
         active.capture('live-05-backup-progress')
         active.wait('Operación completada')
         active.capture('live-06-backup-result')
+        checked = read_json(STATE / 'current' / 'config.json')
+        assert checked['status'] == 'ready' and checked['initial_maintenance_pending'] is False
+        assert not (STATE / 'operation.json').exists()
+        print('[PASS] First terminal backup automatically completes pending web verification before archiving')
         active.send(b'\r', 'Selecciona un respaldo')
         active.select(2, 'Detalle del respaldo')
         active.capture('live-07-backup-detail')
@@ -97,6 +102,7 @@ def main():
         active.send(b'\r', 'Selecciona un respaldo')
         active.send(b'\x1b', 'Administrar Nextcloud')
         active.capture('live-10-dashboard')
+        assert 'Comprobar instalación web' not in '\n'.join(active.screen.display)
         active.send(b'\x1bOF\r')
         active.process.wait(timeout=5)
         assert active.process.returncode == 0
@@ -105,6 +111,7 @@ def main():
         opened = State(STATE).open()
         Suite(opened).check_file()
         Engine(opened).verify()
+        Suite(opened).logging_health()
         assert opened.pending is None
         print('[PASS] Real terminal SQL/app backup, verification, guarded restoration, live files/shares retained and return to backup list')
         print(json.dumps({'nextcloud': target, 'services': 5, 'backup_restore': 'verified', 'user_files': 'retained'}))

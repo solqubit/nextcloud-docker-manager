@@ -111,3 +111,97 @@ class SetupHealthTests(unittest.TestCase):
             result = Manager(state).setup_check()
         self.assertFalse(result['core_integrity_ok'])
         self.assertEqual(state.load()['status'], 'ready')
+
+    def backup_fixture(self, **kwargs):
+        state, engine = self.setup_fixture(**kwargs)
+        manager = Manager(state)
+        manager.quiesce = Mock(return_value=engine)
+        manager.finish = Mock()
+        manager.setup_check = Mock(wraps=manager.setup_check)
+        factory = self.enterContext(patch('ndm.operations.Engine', return_value=engine))
+        preflight = self.enterContext(patch('ndm.operations.archive.preflight'))
+        create = self.enterContext(patch('ndm.operations.archive.create',
+                                         return_value=state.path / 'backups' / 'fixture.ndm.tar'))
+        return state, engine, manager, factory, preflight, create
+
+    def test_backup_completes_initial_checks_before_archiving(self):
+        state, engine, manager, _, preflight, create = self.backup_fixture()
+        def ready_before_backup(live):
+            self.assertEqual(state.load()['status'], 'ready')
+            self.assertFalse(state.load()['initial_maintenance_pending'])
+            self.assertIsNone(state.pending)
+        preflight.side_effect = ready_before_backup
+        path = manager.backup(supplied='BACKUP')
+        manager.setup_check.assert_called_once_with()
+        preflight.assert_called_once_with(engine)
+        create.assert_called_once_with(engine)
+        self.assertEqual(path, create.return_value)
+        self.assertIsNone(state.pending)
+
+    def test_backup_does_not_repeat_completed_initial_checks(self):
+        state, engine, manager, _, _, create = self.backup_fixture(ready=True)
+        manager.backup(supplied='BACKUP')
+        manager.setup_check.assert_not_called()
+        engine.occ.assert_not_called()
+        create.assert_called_once()
+
+    def test_backup_on_large_database_keeps_expensive_repairs_deferred(self):
+        state, engine, manager, _, _, create = self.backup_fixture(size=64 * 1024 ** 2 + 1)
+        manager.backup(supplied='BACKUP')
+        self.assertEqual(state.load()['status'], 'ready')
+        self.assertTrue(state.load()['initial_maintenance_pending'])
+        self.assertNotIn(('maintenance:repair', '--include-expensive'),
+                         [call.args for call in engine.occ.call_args_list])
+        create.assert_called_once()
+
+    def test_failed_automatic_setup_does_not_start_backup_or_mark_ready(self):
+        state, engine, manager, _, preflight, create = self.backup_fixture()
+        engine.occ.side_effect = Error('Repair failed')
+        with self.assertRaisesRegex(Error, 'Repair failed'):
+            manager.backup(supplied='BACKUP')
+        self.assertEqual(state.load()['status'], 'awaiting-web')
+        self.assertIsNone(state.pending)
+        preflight.assert_not_called()
+        create.assert_not_called()
+        manager.quiesce.assert_not_called()
+
+    def test_backup_without_web_administrator_explains_where_to_complete_setup(self):
+        state, engine, manager, _, _, create = self.backup_fixture()
+        engine.status.return_value = {'installed': False}
+        with self.assertRaisesRegex(Error, 'instalación web.*http://127.0.0.1'):
+            manager.backup(supplied='BACKUP')
+        manager.setup_check.assert_not_called()
+        create.assert_not_called()
+        self.assertIsNone(state.pending)
+
+    def test_cancelled_backup_does_not_run_initial_repairs(self):
+        state, engine, manager, factory, _, create = self.backup_fixture()
+        with self.assertRaises(Error):
+            manager.backup(supplied='CANCEL')
+        factory.assert_not_called()
+        engine.occ.assert_not_called()
+        manager.setup_check.assert_not_called()
+        create.assert_not_called()
+        self.assertEqual(state.load()['status'], 'awaiting-web')
+
+    def test_automatic_setup_keeps_maintenance_upgrade_and_pending_guards(self):
+        for condition in ('maintenance', 'needsDbUpgrade', 'pending'):
+            with self.subTest(condition=condition):
+                state, engine, manager, _, _, create = self.backup_fixture()
+                if condition == 'pending':
+                    state.begin('backup')
+                else:
+                    engine.status.return_value = {'installed': True, condition: True}
+                with self.assertRaises(Error):
+                    manager.backup(supplied='BACKUP')
+                manager.setup_check.assert_not_called()
+                create.assert_not_called()
+
+    def test_automatic_setup_must_persist_ready_before_backup_can_proceed(self):
+        state, _, manager, _, _, create = self.backup_fixture()
+        manager.setup_check = Mock(return_value={'installed': True})
+        with self.assertRaises(Error):
+            manager.backup(supplied='BACKUP')
+        manager.setup_check.assert_called_once_with()
+        create.assert_not_called()
+        self.assertIsNone(state.pending)
