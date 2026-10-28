@@ -28,6 +28,8 @@ sudo bash start.sh --lang en
 3. The manager automatically completes initial verification before backups, Nextcloud or component updates, and configuration changes, provided the administrator already exists. **Check web installation** remains available to run it directly. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
 4. Add a domain when you want external access.
 
+After administrator creation, cron automatically sets a 300-second app store timeout. Custom values are preserved; checks, updates and restores also apply the default when it is missing.
+
 On a VPS, or any server with a public IP, the first installation listens only on 127.0.0.1 and opens through SSH (the manager rejects a public IP until the administrator exists):
 
 ```bash
@@ -40,7 +42,7 @@ After installation: `sudo bash /opt/nextcloud-docker-manager/start.sh --lang en`
 ## Domain and HTTPS
 
 Use **Domains and access** to add or remove hosts and IP addresses and change ports. Keep the local address to retain local access.
-The first tunnel domain automatically becomes primary if you are still using a local address.
+Each access type shows saved addresses first and offers adding another. The first public domain, tunnel or direct, becomes primary if no other public domain exists; adding more retains your choice.
 
 - **Cloudflare Tunnel:** install cloudflared manually, route the hostname to `http://LOCAL_IP:HTTP_PORT`, and add that domain in tunnel mode in the manager.
 - **Direct VPS:** point IPv4 DNS to the server, add the domain and publish TCP 80/443; allow these ports in the firewall too.
@@ -67,6 +69,8 @@ Default directory: `/opt/nextcloud-docker-manager`. Choose another disk for data
 Backups contain SQL, application state and certificates. **They exclude `data/<id>/data/`: documents, versions, trash and appdata**, so they stay fast and do not fill the disk on installations of hundreds of GB; back that folder up with your file backup tool. They contain credentials: keep them private. Automatic pre-update backups keep the 3 newest; manual ones are deleted from **Backups**. For another manager directory, start with `sudo bash start.sh --state-dir /another/path`.
 
 ## Updates and recovery
+
+Use **Maintenance → Reset Nextcloud password** to select an account and enter a new password twice. The current password cannot be displayed. The manager does not log the new password; server-side encryption requires Nextcloud's specific recovery process to retain access to encrypted files. Restoring SQL also restores the passwords that existed in that backup.
 
 - **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
 - **MariaDB:** keeps `11.4.x`. Changing LTS is allowed only when required by the target Nextcloud.

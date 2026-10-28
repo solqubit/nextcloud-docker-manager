@@ -278,9 +278,10 @@ class Runner:
             # Inspect output includes container environments (passwords), so it is never logged.
             secret = quiet or 'inspect' in [str(x) for x in args[:4]]
             with self.state.log.open('a', encoding='utf-8') as out:
-                out.write(('[output omitted: may contain credentials]\n' if secret else stdout) + stderr)
+                out.write('[output omitted: may contain credentials]\n' if quiet else
+                          ('[output omitted: may contain credentials]\n' if secret else stdout) + stderr)
         if check and result.returncode:
-            detail = (stderr or stdout)[-2200:]
+            detail = 'Private command failed; output withheld' if quiet else (stderr or stdout)[-2200:]
             raise Error(f'{args[0]}: {detail}')
         return subprocess.CompletedProcess(args, result.returncode, stdout, stderr)
 

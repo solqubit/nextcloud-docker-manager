@@ -10,11 +10,29 @@ from unittest.mock import Mock, patch
 
 from ndm.config import caddyfile, compose, managed_php, validate
 from ndm.core import Error, State
+from ndm.docker import Engine
 from ndm.operations import Manager
 from test_foundation import configuration
 
 
 class SetupHealthTests(unittest.TestCase):
+    def test_appstore_timeout_default_does_not_replace_custom_values(self):
+        engine = Engine.__new__(Engine)
+        for current in ('', '180', '600'):
+            with self.subTest(current=current):
+                engine.occ = Mock(return_value=SimpleNamespace(stdout=current))
+                engine.configure_app_defaults()
+                if current:
+                    self.assertEqual(engine.occ.call_count, 1)
+                else:
+                    engine.occ.assert_any_call('config:app:set', 'settings', 'appstore-timeout', '--value=300')
+
+    def test_ready_ensures_defaults_before_existing_installation_operations(self):
+        state, engine = self.setup_fixture(ready=True)
+        with patch('ndm.operations.Engine', return_value=engine):
+            self.assertIs(Manager(state).ready(), engine)
+        engine.configure_app_defaults.assert_called_once_with()
+
     def test_public_hsts_does_not_force_local_http_or_local_certificates(self):
         cfg = configuration()
         self.assertNotIn('Strict-Transport-Security', caddyfile(cfg))

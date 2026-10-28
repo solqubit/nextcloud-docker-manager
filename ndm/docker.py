@@ -8,7 +8,7 @@ import shutil
 import socket
 import time
 
-from .config import compose, managed_php
+from .config import DEFAULT_APPSTORE_TIMEOUT, compose, managed_php
 from .core import Error, LABEL, Runner, atomic
 
 
@@ -221,6 +221,7 @@ class Engine:
             if status.get('versionstring') != self.cfg['version']:
                 raise Error('La versión de Nextcloud no coincide con la imagen elegida / Application version differs from selected image')
             if configure_cron:
+                self.configure_app_defaults()
                 self.occ('background:cron')
         until = time.monotonic() + 90
         while time.monotonic() < until:
@@ -238,6 +239,24 @@ class Engine:
             if code not in ('200', '308') or (code == '200' and not json.loads(body).get('installed')):
                 raise Error('Nextcloud no responde a través del proxy configurado / Nextcloud is not reachable through its configured proxy route')
         return status
+
+    def configure_app_defaults(self):
+        current = self.occ('config:app:get', 'settings', 'appstore-timeout', '--default-value=').stdout.strip()
+        if not current:
+            self.occ('config:app:set', 'settings', 'appstore-timeout', f'--value={DEFAULT_APPSTORE_TIMEOUT}')
+
+    def reset_password(self, user, password):
+        # Send the password only through stdin, never argv, an environment on
+        # the Docker client, a file, or manager command/output logs.
+        script = ('putenv("NC_PASS=".stream_get_contents(STDIN)); '
+                  '$argv[0]="/var/www/html/occ"; $_SERVER["argv"]=$argv; '
+                  'require "/var/www/html/occ";')
+        result = self.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-r', script, '--',
+                         'user:resetpassword', '--password-from-env', '--no-interaction', '--', user,
+                         input=password, quiet=True, check=False)
+        if result.returncode:
+            detail = (result.stderr or result.stdout).replace(password, '[hidden]')[-800:]
+            raise Error('No se pudo restablecer la contraseña / Could not reset password: ' + detail)
 
     def probe_http(self, entry):
         """Probe the proxy from the application network; no public credentials sent."""

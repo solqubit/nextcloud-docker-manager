@@ -45,6 +45,21 @@ class DomainAccessTests(unittest.TestCase):
         cfg = self.add('second.example.com', mode='tunnel')
         self.assertEqual(cfg['primary'], 'first.example.com')
 
+    def test_first_direct_domain_becomes_primary_without_replacing_local_access(self):
+        cfg = self.add('vps.example.com', mode='direct')
+        self.assertEqual(cfg['primary'], 'vps.example.com')
+        self.assertEqual(cfg['domains'][0]['host'], '127.0.0.1')
+        self.assertEqual(access_url(cfg), 'https://vps.example.com')
+
+    def test_additional_direct_domain_preserves_public_and_manual_local_preferences(self):
+        self.add('first.example.com', mode='direct')
+        cfg = self.add('second.example.com', mode='direct')
+        self.assertEqual(cfg['primary'], 'first.example.com')
+        cfg['primary'] = '127.0.0.1'
+        self.state.activate(self.state.revision(cfg))
+        cfg = self.add('third.example.com', mode='tunnel')
+        self.assertEqual(cfg['primary'], '127.0.0.1')
+
     def test_later_tunnel_keeps_a_manually_restored_local_preference(self):
         cfg = self.add('first.example.com', mode='tunnel')
         cfg['primary'] = '127.0.0.1'

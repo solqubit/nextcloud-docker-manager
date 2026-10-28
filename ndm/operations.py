@@ -14,7 +14,7 @@ import time
 
 from . import archive
 from .catalog import Catalog
-from .config import access_url, compose, host, initial, port, prefer_first_tunnel, public_host, validate
+from .config import access_url, compose, host, initial, port, prefer_first_public, public_host, validate
 from .core import Error, Runner, State, atomic, confirm, human, read_json, stage, stamp, version_tuple
 from .docker import Engine
 from .maintenance import Maintenance, component_series
@@ -132,6 +132,24 @@ class Manager(Maintenance, DatabaseMigration):
                 'status': engine.status(), 'operation': self.state.pending,
                 'services': services, 'support': self.catalog.support_status(engine.cfg['version'])}
 
+    def users(self):
+        engine = self.ready()
+        return json.loads(engine.occ('user:list', '--output=json', '--limit=500').stdout)
+
+    def reset_password(self, user, password, supplied=None):
+        if not user or len(user) > 255 or any(ord(char) < 32 for char in user):
+            raise Error('Identificador de usuario inválido / Invalid user ID')
+        if not password or any(char in password for char in '\x00\r\n'):
+            raise Error('La contraseña no puede estar vacía ni contener saltos de línea / Password must not be empty or contain line breaks')
+        engine = self.ready()
+        encryption = json.loads(engine.occ('encryption:status', '--output=json').stdout)
+        if encryption.get('enabled'):
+            raise Error('Cifrado del servidor activo: usa la recuperación de Nextcloud para conservar el acceso a los archivos / '
+                        'Server-side encryption is enabled: use Nextcloud recovery to retain access to encrypted files')
+        confirm('RESET-PASSWORD', supplied, user)
+        engine.reset_password(user, password)
+        return {'user': user}
+
     def ready(self, *, complete_setup=True):
         if self.state.pending:
             raise Error('Operación pendiente; usa recover / Pending operation; use recover')
@@ -153,6 +171,7 @@ class Manager(Maintenance, DatabaseMigration):
                 return self.ready(complete_setup=False)
             # finish() marks the installation ready; running it first would skip the initial repairs.
             raise Error('Primero elige «Comprobar instalación web» / First run «Check web installation»')
+        engine.configure_app_defaults()
         return engine
 
     def reopen(self):
@@ -294,7 +313,7 @@ class Manager(Maintenance, DatabaseMigration):
         name = host(name) if mode == 'local' else public_host(name)
         if any(e['host'] == name for e in cfg['domains']):
             raise Error('La dirección ya existe / Address already exists')
-        auto_primary = prefer_first_tunnel(cfg, mode)
+        auto_primary = prefer_first_public(cfg, mode)
         cfg['domains'].append(dict(host=name, kind='local' if mode == 'local' else 'public',
                                    mode=mode, tls=tls if mode == 'local' else 'acme', email=email))
         if mode != 'local':

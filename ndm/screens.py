@@ -11,7 +11,7 @@ import traceback
 from zoneinfo import ZoneInfo, available_timezones
 
 from . import archive
-from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host, port, prefer_first_tunnel, public_host
+from .config import DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, access_url, host, port, prefer_first_public, public_host
 from .console import Console
 from .core import Cancelled, Error, human
 from .dashboard import dashboard
@@ -357,14 +357,17 @@ class Controller:
     def domain_action(self, action, cfg):
         if action.startswith('add_'):
             mode = action.removeprefix('add_')
-            mode = 'local' if mode == 'local' else mode
+            if not self.domain_directory(action, mode):
+                return
+            cfg = self.state.load()
             fields = ['name'] + (['email', 'external_port'] if mode != 'local' else [])
             if mode == 'direct':
                 fields.append('publish')
             data = dict(name='', public=mode != 'local', email='', external_port=443, publish=False)
-            form = Form(self.view, action, data, fields, installed=True, submit='save_access')
-            if prefer_first_tunnel(cfg, mode):
-                form.notice = self.term.t('tunnel_first_primary')
+            form = Form(self.view, 'domain_new_' + mode, data, fields, submit='save_access')
+            form.notice = self.term.t('domain_new_help')
+            if prefer_first_public(cfg, mode):
+                form.notice += '\n' + self.term.t('public_first_primary')
             draft = form.run()
             if draft is None:
                 return
@@ -427,6 +430,47 @@ class Controller:
                     entry = next(entry for entry in cfg['domains'] if entry['host'] == name)
                     entry['tls'] = 'internal' if entry['tls'] == 'off' else 'off'
                 self.perform(action, lambda: self.manager.settings(cfg), context=[(self.term.t('name'), name)])
+
+    def domain_directory(self, action, mode):
+        """Show saved addresses before offering a fresh, explicitly labelled draft."""
+        while True:
+            cfg = self.state.load()
+            entries = [entry for entry in cfg['domains'] if entry.get('mode', 'local') == mode]
+            rows = []
+            for entry in entries:
+                label = access_url(cfg, entry)
+                if entry['host'] == cfg['primary']:
+                    label += ' · ' + self.term.t('domains_current_primary')
+                rows.append(('entry:' + entry['host'], label, 'ok'))
+            if rows:
+                rows.append((SEPARATOR, '', ''))
+            rows.append(('new', '+ ' + self.term.t('domain_new_' + mode), 'accent'))
+            choice = self.menu(action, rows, notice=self.term.t('domain_directory_help' if entries else 'domain_directory_empty'))
+            if choice is None:
+                return False
+            if choice == 'new':
+                return True
+            self.domain_details(choice.removeprefix('entry:'))
+
+    def domain_details(self, name):
+        while True:
+            cfg = self.state.load()
+            entry = next((entry for entry in cfg['domains'] if entry['host'] == name), None)
+            if entry is None:
+                return
+            rows = [] if cfg['primary'] == name else [('primary', self.term.t('domain_make_primary'), 'ok')]
+            rows.append(('remove', self.term.t('remove'), 'warning'))
+            notice = self.term.t('domain_saved', access_url(cfg, entry))
+            if cfg['primary'] == name:
+                notice += '\n' + self.term.t('domains_current_primary')
+            choice = self.menu('domain_details', rows, notice=notice)
+            if choice is None:
+                return
+            if choice == 'remove':
+                self.perform('remove', lambda: self.manager.remove_domain(name), context=[(self.term.t('name'), name)])
+                return
+            cfg['primary'] = name
+            self.perform('primary', lambda: self.manager.settings(cfg), context=[(self.term.t('name'), name)])
 
     def backups(self):
         focus = ''
@@ -601,15 +645,54 @@ class Controller:
             if enabled is not None:
                 rows += [('disable', self.term.t('disable'), 'warning') if enabled else ('enable', self.term.t('enable'), 'accent'),
                          ('schedule_status', self.term.t('schedule_status'), '')]
+            rows.append(('reset_password', self.term.t('reset_password'), 'accent'))
             state = self.term.t('schedule_unavailable' if enabled is None else 'schedule_on' if enabled else 'schedule_off')
             notice, tone = self.notice_for(state)
             selected = self.menu('maintenance', rows, notice=notice, notice_style=tone,
                                  help_text=self.term.t('maintenance_help'))
             if not selected:
                 return
+            if selected == 'reset_password':
+                self.attempt(self.reset_password)
+                continue
             lookup = {'enable': 'enable', 'disable': 'disable', 'schedule_status': 'status'}
             self.attempt(lambda: self.perform('maintenance', self.manager.maintenance if selected == 'run_checks'
                                               else lambda: self.manager.schedule(lookup[selected])))
+
+    def reset_password(self):
+        users = self.view.run('reset_password', self.manager.users)
+        user = self.view.pick('password_user', [('user:' + key, key + ' · ' + str(value), '') for key, value in users.items()]
+                              + [('manual', self.term.t('manual_value'), 'accent')], search=True,
+                              notice=self.term.t('password_user_help'))
+        if user == 'manual':
+            user = self.view.edit('password_user', '')
+        elif user is not None:
+            user = user.removeprefix('user:')
+        if user is None or not user:
+            return
+        hint = self.term.t('password_for', user) + '\n' + self.term.t('password_help')
+        while True:
+            password = self.view.edit('password_new', '', secret=True, hint=hint,
+                                      normalize=lambda value: value if value else self.password_invalid())
+            if password is None:
+                return
+            def repeated(value):
+                if value != password:
+                    raise Error(self.term.t('password_mismatch'))
+                return value
+            repeated_password = self.view.edit('password_repeat', '', normalize=repeated, secret=True,
+                                               hint=hint)
+            if repeated_password is None:
+                return
+            try:
+                self.perform('reset_password', lambda: self.manager.reset_password(user, password),
+                             context=[(self.term.t('password_user'), user)], notice=self.term.t('password_reset_done'))
+            finally:
+                password = repeated_password = None
+            return
+
+    def password_invalid(self):
+        raise Error(self.term.t('password_empty'))
 
     def action(self, action):
         if action == 'language':

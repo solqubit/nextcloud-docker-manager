@@ -28,6 +28,8 @@ sudo bash start.sh
 3. El gestor completa automáticamente la verificación inicial al respaldar, actualizar Nextcloud o sus componentes y aplicar configuraciones, siempre que ya hayas creado el administrador. **Comprobar instalación web** sigue disponible para ejecutarla directamente. En instalaciones nuevas con SQL de hasta 64 MiB completa índices y tipos MIME; con bases mayores los deja para mantenimiento planificado.
 4. Añade un dominio cuando quieras acceso externo.
 
+Tras crear el administrador, cron configura automáticamente 300 segundos de espera para la tienda de aplicaciones. Se conserva cualquier valor personalizado; las comprobaciones, actualizaciones y restauraciones también aplican el valor predeterminado si falta.
+
 En una VPS, o en cualquier servidor con IP pública, la primera instalación escucha solo en 127.0.0.1 y se abre mediante SSH (el gestor rechaza una IP pública hasta que exista el administrador):
 
 ```bash
@@ -40,7 +42,7 @@ Después de instalar: `sudo bash /opt/nextcloud-docker-manager/start.sh`.
 ## Dominio y HTTPS
 
 En **Dominios y acceso** puedes agregar o quitar dominios e IP y ajustar los puertos. Conserva la dirección local para seguir entrando por ella.
-El primer dominio de un túnel se elige como principal automáticamente si todavía usas una dirección local.
+Cada tipo de acceso muestra primero las direcciones guardadas y ofrece añadir otra. El primer dominio público, de túnel o directo, se elige como principal si todavía no hay otro dominio público; añadir más conserva tu elección.
 
 - **Cloudflare Tunnel:** instala cloudflared manualmente, configura el hostname hacia `http://IP_LOCAL:PUERTO_HTTP` y añade ese dominio en modo túnel en el gestor.
 - **VPS directa:** apunta el DNS IPv4 al servidor, añade el dominio y publica TCP 80/443; habilítalos también en el firewall.
@@ -67,6 +69,8 @@ Base predeterminada: `/opt/nextcloud-docker-manager`. Puedes elegir otro disco p
 Los respaldos guardan SQL, aplicación y certificados. **Excluyen `data/<id>/data/`: documentos, versiones, papelera y appdata**, para que sean rápidos y no llenen el disco con instalaciones de cientos de GB; respalda esa carpeta con tu herramienta de archivos. Contienen credenciales: mantenlos privados. Los respaldos automáticos previos a una actualización conservan los 3 más recientes; los manuales se eliminan desde **Respaldos**. Para otra ruta del gestor, inicia con `sudo bash start.sh --state-dir /otra/ruta`.
 
 ## Actualizar y recuperar
+
+En **Mantenimiento → Restablecer contraseña de Nextcloud** puedes seleccionar la cuenta y confirmar dos veces una contraseña nueva. La actual no se puede mostrar. El gestor no registra la nueva contraseña; con cifrado del servidor activo se requiere la recuperación específica de Nextcloud para conservar el acceso a los archivos cifrados. Al restaurar SQL se recuperan también las contraseñas que existían en ese respaldo.
 
 - **Nextcloud:** parches dentro de la misma rama; versiones mayores consecutivas, empezando por el último parche de la actual.
 - **MariaDB:** conserva `11.4.x`. Solo permite cambiar de LTS si el Nextcloud objetivo lo exige.

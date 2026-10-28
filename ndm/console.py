@@ -207,7 +207,7 @@ class Console:
         with self.prompt():
             return self.term.run(lambda: self.term.menu(self.t(title), rows, **kwargs))
 
-    def edit(self, key, value, normalize=str, hint='', default=None, preview=None):
+    def edit(self, key, value, normalize=str, hint='', default=None, preview=None, secret=False):
         def validate(text):
             try:
                 normalize(text)
@@ -216,7 +216,7 @@ class Console:
             return ''
         with self.prompt():
             result = self.term.run(lambda: self.term.edit(self.t(key), value, hint, validate,
-                                  default=value if default is None else default, preview=preview))
+                                  default=value if default is None else default, preview=preview, secret=secret))
         return None if result is None else normalize(result)
 
     def view(self, title, rows, **kwargs):
@@ -256,6 +256,7 @@ class Console:
                 'START-DOCKER': ('confirm_start_docker', 'accent'),
                 'BACKUP': ('backup_scope', 'accent'),
                 'APPLY': ('confirm_settings', 'accent'),
+                'RESET-PASSWORD': ('confirm_reset_password', 'warning'),
                 'RESUME': ('confirm_resume', 'warning'),
                 'SCHEDULE-ENABLE': ('confirm_schedule', 'accent'),
                 'SCHEDULE-DISABLE': ('confirm_disable_schedule', 'warning'),
@@ -273,6 +274,8 @@ class Console:
         # The token remains in the review for precise identification, without
         # requiring it to be typed for ordinary reversible actions.
         note = self.t(key) + '\n' + expected
+        if expected == 'RESET-PASSWORD':
+            note += '\n' + '\n'.join(str(label) + ': ' + str(value) for label, value in self.context)
         if message and ' / ' not in message and message != expected:
             note += ' · ' + message
         choice = self.pick('confirm_operation', [

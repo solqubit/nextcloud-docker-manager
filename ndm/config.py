@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 import secrets
+import shlex
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +15,7 @@ from .core import Error, LABEL, version_tuple
 
 DEFAULT_HTTP_PORT = 80
 DEFAULT_HTTPS_PORT = 443
+DEFAULT_APPSTORE_TIMEOUT = 300
 # RFC 1918, loopback, link-local, carrier-grade NAT (Tailscale) and IPv6 ULA/loopback.
 PRIVATE_CLIENTS = 'private_ranges 100.64.0.0/10 169.254.0.0/16'
 
@@ -133,11 +135,11 @@ def initial(version, images, *, environment='lan', bind='127.0.0.1', address=Non
     return cfg
 
 
-def prefer_first_tunnel(cfg, mode):
-    """Promote the first tunnel while retaining an existing public preference."""
+def prefer_first_public(cfg, mode):
+    """Promote the first public address while retaining later user preferences."""
     current = next(entry for entry in cfg['domains'] if entry['host'] == cfg['primary'])
-    return (mode == 'tunnel' and current['kind'] == 'local'
-            and not any(entry['mode'] == 'tunnel' for entry in cfg['domains']))
+    return (mode in ('tunnel', 'direct') and current['kind'] == 'local'
+            and not any(entry['kind'] == 'public' for entry in cfg['domains']))
 
 
 def access_url(cfg, entry=None):
@@ -224,6 +226,20 @@ def caddyfile(cfg):
     return '\n'.join(lines) + '\n'
 
 
+def cron_command():
+    # Apply the default even when the administrator is created through the web,
+    # before the manager's first setup check. Preserve explicit custom settings.
+    defaults = ('value=$(php /var/www/html/occ config:app:get settings appstore-timeout --default-value=); '
+                'if [ -z "$value" ]; then php /var/www/html/occ config:app:set settings appstore-timeout '
+                f'--value={DEFAULT_APPSTORE_TIMEOUT}; fi')
+    return ('child=""; configured=0; '
+            'trap \'[ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true; exit 0\' TERM INT; '
+            'while :; do if su -p www-data -s /bin/sh -c "php /var/www/html/occ status -e" >/dev/null 2>&1; then '
+            'if [ "$configured" = 0 ]; then su -p www-data -s /bin/sh -c ' + shlex.quote(defaults) + '; configured=1; fi; '
+            'su -p www-data -s /bin/sh -c "php -f /var/www/html/cron.php" & child=$!; wait "$child"; delay=300; '
+            'else delay=10; fi; sleep "$delay" & child=$!; wait "$child"; done')
+
+
 def compose(cfg):
     labels = {LABEL + '.installation': cfg['id']}
     network = ipaddress.ip_network(cfg['subnet'])
@@ -258,7 +274,7 @@ def compose(cfg):
                             'interval': '10s', 'timeout': '5s', 'retries': 30, 'start_period': '60s'}},
         'cron': {'image': cfg['images']['app'], 'environment': env, 'volumes': volumes,
             'stop_signal': 'SIGTERM',
-            'entrypoint': ['/bin/sh', '-ec', 'child=""; trap \'[ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true; exit 0\' TERM INT; while :; do if su -p www-data -s /bin/sh -c "php /var/www/html/occ status -e" >/dev/null 2>&1; then su -p www-data -s /bin/sh -c "php -f /var/www/html/cron.php" & child=$!; wait "$child"; fi; sleep 300 & child=$!; wait "$child"; done'],
+            'entrypoint': ['/bin/sh', '-ec', cron_command()],
             'networks': ['backend', 'proxy'], 'depends_on': ['app']},
         'proxy': {'image': cfg['images']['proxy'], 'environment': {'NDM_CADDY_CONFIG': caddyfile(cfg)},
             'entrypoint': ['/bin/sh', '-ec', 'printf "%s\\n" "$NDM_CADDY_CONFIG" > /tmp/Caddyfile; exec caddy run --config /tmp/Caddyfile --adapter caddyfile'],

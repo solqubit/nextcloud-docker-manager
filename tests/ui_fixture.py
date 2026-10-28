@@ -12,7 +12,7 @@ import tarfile
 import time
 from unittest.mock import patch
 
-from ndm.config import initial, prefer_first_tunnel
+from ndm.config import initial, prefer_first_public
 from ndm.core import Error, State, atomic, confirm, stage
 from ndm.screens import Controller
 
@@ -77,6 +77,14 @@ class FixtureManager:
         self.record('setup')
         return {'installed': True, 'maintenance': False}
 
+    def users(self):
+        return {'test-admin': 'Test Admin'}
+
+    def reset_password(self, user, password):
+        confirm('RESET-PASSWORD')
+        self.record('reset_password', user=user)
+        return {'user': user}
+
     def checks(self):
         time.sleep(0.25)
         # Same shape as Manager.checks(); the major unlocks once the patch is applied.
@@ -139,7 +147,7 @@ class FixtureManager:
     def add_domain(self, name, **kwargs):
         confirm('APPLY')
         cfg = self.state.load()
-        if prefer_first_tunnel(cfg, kwargs['mode']):
+        if prefer_first_public(cfg, kwargs['mode']):
             cfg['primary'] = name
         cfg['domains'].append(dict(host=name, kind='local' if kwargs['mode'] == 'local' else 'public',
                                    mode=kwargs['mode'], tls='off' if kwargs['mode'] == 'local' else 'acme',
