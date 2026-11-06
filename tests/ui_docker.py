@@ -134,11 +134,11 @@ def main():
         assert not (STATE / 'operation.json').exists()
         print('[PASS] First terminal backup automatically completes pending web verification before archiving')
         active.send(b'\r', 'Selecciona un respaldo')
-        active.select(2, 'Detalle del respaldo')
+        active.select(1, 'Detalle del respaldo')
         active.capture('live-07-backup-detail')
         active.send(b'\r', 'Integridad verificada')
         active.send(b'\r', 'Selecciona un respaldo')
-        active.select(2, 'Detalle del respaldo')
+        active.select(1, 'Detalle del respaldo')
         # Detail actions: verify, restore, delete, back; End then Up twice reaches Restore.
         active.send(b'\x1bOF\x1bOA\x1bOA\r', 'Revisar y confirmar')
         active.send(b'\x1bOB\r', 'Escribe RESTORE')

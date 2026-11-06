@@ -74,7 +74,7 @@ Use **Accounts → Reset password** on the main menu to select an account and en
 
 - **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
 - **MariaDB:** keeps `11.4.x`. Changing LTS is allowed only when required by the target Nextcloud.
-- **Redis and Caddy:** independent updates.
+- **Redis and Caddy:** replaced without maintenance mode, with a cut of about one second while Caddy restarts (no backup or rehearsal, since they never touch the database) and reverted if they fail.
 - **Health checks:** services, cron, certificates, space, official support, available updates and the latest backup's integrity. Warns near end of support and marks expired branches as obsolete. The daily schedule (a systemd timer) never applies updates and exits with an error when it finds problems.
 
 **Updates** shows patches, the next major, image refresh and components on one screen. Before updating, free space is checked while Nextcloud is online; then the manager enables maintenance, backs up SQL/application state, and rehearses the change with actual SQL in isolated containers without documents. If the backup or the rehearsal fails, the service is restored unchanged. This takes time and free Docker storage.

@@ -78,8 +78,6 @@ def parser():
     child = sub.add_parser('logs')
     child.add_argument('service', choices=['app', 'db', 'redis', 'proxy', 'cron'])
     child.add_argument('--tail', type=int, default=100)
-    child = sub.add_parser('export-images')
-    child.add_argument('path')
     child = sub.add_parser('schedule')
     child.add_argument('action', choices=['enable', 'disable', 'status'])
     child.add_argument('--confirm')
@@ -161,8 +159,6 @@ def dispatch(manager, args):
         return engine.dc('logs', '--no-color', '--tail', str(min(max(args.tail, 1), 2000)), args.service).stdout
     if command == 'export-ca':
         return str(engine.ca_certificate())
-    if command == 'export-images':
-        return engine.export_images(args.path)
     if command == 'diagnose':
         return {'host': host_info(), 'state': manager.status(), 'disk_free': __import__('shutil').disk_usage(state.path).free,
                 'sql_application_free_bytes': engine.check_space(0),

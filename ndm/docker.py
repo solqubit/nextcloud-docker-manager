@@ -298,10 +298,6 @@ class Engine:
         atomic(dest, result.stdout, 0o644)
         return dest
 
-    def export_images(self, destination):
-        self.runner.run(['docker', 'image', 'save', '-o', destination, *set(self.cfg['images'].values())], timeout=1800)
-        os.chmod(destination, 0o600)
-
     def remove_owned(self, delete_volumes=False):
         # Check labels before Compose acts on names selected by its project label.
         containers = self.runner.run(['docker', 'ps', '--all', '--quiet', '--filter',

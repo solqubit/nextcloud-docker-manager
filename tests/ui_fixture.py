@@ -218,10 +218,6 @@ class FixtureEngine:
     def check_space(self, *args):
         return 8 * 1024 ** 3
 
-    def export_images(self, path):
-        path.write_text('image-fixture')
-        return path
-
     def ca_certificate(self):
         path = self.state.path / 'local-ca.crt'
         path.write_text('public-certificate-fixture')

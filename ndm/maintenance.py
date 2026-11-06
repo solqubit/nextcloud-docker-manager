@@ -33,13 +33,15 @@ class Maintenance:
         confirm('UPDATE-' + component.upper(), supplied, f'{repo}: {old} -> {tag}')
         changed = copy.deepcopy(cfg)
         changed['images'][component] = image
+        if component != 'db':
+            return self.swap_component(component, changed, tag)
         changed['maintenance_gate'] = True
         revision = self.state.revision(changed)
         proposed = Engine(self.state, changed, revision)
         proposed.pull([component])
         proposed.validate()
         archive.preflight(live)
-        self.state.begin('db-update' if component == 'db' else 'component-update',
+        self.state.begin('db-update',
                          source=str((self.state.path / 'current').resolve()), component=component)
         with self.reopen_on_failure():
             path = archive.create(self.quiesce(), 'pre-update')
@@ -51,6 +53,32 @@ class Maintenance:
         self.state.done()
         self.prune_backups()
         return {'component': component, 'version': tag, 'backup': str(path)}
+
+    def swap_component(self, component, changed, tag):
+        """Redis (cache without persistence) and Caddy (proxy) never touch SQL: replace only
+        that container, online, and return to the previous image if verification fails."""
+        revision = self.state.revision(changed)
+        proposed = Engine(self.state, changed, revision)
+        proposed.pull([component])
+        proposed.validate()
+        source = (self.state.path / 'current').resolve()
+        self.state.begin('component-update', source=str(source), target=str(revision), component=component)
+        try:
+            self.state.activate(revision)
+            proposed.up(component)
+            Engine(self.state).verify()
+            self.state.done()
+        except BaseException:
+            self.state.activate(source)
+            previous = Engine(self.state)
+            try:
+                previous.up(component)
+                previous.verify()
+                self.state.done()
+            except BaseException:
+                pass
+            raise
+        return {'component': component, 'version': tag}
 
     def maintenance(self):
         result = {'checked': dt.datetime.now(dt.timezone.utc).isoformat(), 'errors': [], 'warnings': []}

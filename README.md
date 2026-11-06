@@ -74,7 +74,7 @@ En el menú principal, **Cuentas → Cambiar contraseña**, puedes seleccionar l
 
 - **Nextcloud:** parches dentro de la misma rama; versiones mayores consecutivas, empezando por el último parche de la actual.
 - **MariaDB:** conserva `11.4.x`. Solo permite cambiar de LTS si el Nextcloud objetivo lo exige.
-- **Redis y Caddy:** actualizaciones independientes.
+- **Redis y Caddy:** se cambian sin modo mantenimiento, con un corte de alrededor de un segundo al reiniciar Caddy (sin respaldo ni ensayo, porque no tocan la base de datos) y vuelven a la versión anterior si fallan.
 - **Comprobaciones de salud:** servicios, cron, certificados, espacio, soporte oficial, actualizaciones disponibles e integridad del último respaldo. Avisa al acercarse el fin de soporte y marca la rama como obsoleta cuando termina. La programación diaria (temporizador systemd) no aplica actualizaciones y termina con error si encuentra problemas.
 
 En **Actualizaciones** ves en una sola pantalla los parches, la siguiente versión mayor, la renovación de imagen y los componentes. Antes de actualizar se comprueba el espacio con Nextcloud en línea; después se activa mantenimiento, se respalda SQL/aplicación y se ensaya el cambio con SQL real en contenedores aislados, sin documentos. Si el respaldo o el ensayo fallan, el servicio se restablece sin cambios. Requiere tiempo y espacio en Docker.

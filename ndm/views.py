@@ -151,17 +151,16 @@ def status_rows(ui, data, cfg):
 
 
 def result_rows(ui, action, result, state):
-    if action in ('status', 'install', 'setup', 'setup-check') and isinstance(result, dict) and 'services' in result:
-        return status_rows(ui, result, state.load())
-    if action == 'diagnose':
+    if action in ('status', 'diagnose') and isinstance(result, dict) and 'host' in result:
+        # Nextcloud first, then the server underneath it.
         host = result.get('host', {})
-        rows = pair(ui, 'os', host.get('os', {}).get('PRETTY_NAME', '—'))
+        rows = status_rows(ui, result.get('state', {}), state.load())
+        rows += section(ui, 'server')
+        rows += pair(ui, 'os', host.get('os', {}).get('PRETTY_NAME', '—'))
         rows += pair(ui, 'architecture', host.get('architecture', '—'))
         rows += pair(ui, 'address', host.get('address', '—'))
         rows += pair(ui, 'disk_free', human(result.get('disk_free', 0)))
         rows += pair(ui, 'sql_application_free_bytes', human(result.get('sql_application_free_bytes', 0)))
-        rows += section(ui, 'group_service')
-        rows += status_rows(ui, result.get('state', {}), state.load())
         if result.get('last_maintenance'):
             rows += section(ui, 'last_maintenance')
             rows += [(clean(str(result['last_maintenance'].get('time', ''))), '')]

@@ -249,14 +249,6 @@ class Suite:
         self.engine.dc('exec', '-T', '--user', 'www-data', 'app', 'php', '-f', '/var/www/html/cron.php')
         health = self.manager.maintenance()
         assert not health['errors'], health['errors']
-        exported = self.state.path / 'cache' / 'sample-caddy-image.tar'
-        single = copy.deepcopy(cfg)
-        single['images'] = {'proxy': cfg['images']['proxy']}
-        Engine(self.state, single).export_images(exported)
-        assert exported.stat().st_size > 1024 * 1024
-        with tarfile.open(exported) as image:
-            assert image.getmembers()
-        exported.unlink()
         self.manager.self_update('/workspace', supplied='UPDATE-MANAGER')
         blocked = subprocess.run(['bash', str(self.state.path / 'start.sh'), 'status'], capture_output=True, text=True, cwd='/tmp')
         assert blocked.returncode == 1 and 'operation' in blocked.stderr.lower()
@@ -268,7 +260,7 @@ class Suite:
             self.state.open()
         assert completed.returncode == 0 and 'versionstring' in completed.stdout, completed.stderr
         assert diagnostic.returncode == 0 and json.loads(diagnostic.stdout)['sql_application_free_bytes'] > 0, diagnostic.stderr
-        print('[PASS] Docker port conflict, backup parser, cron, daily health/certificate checks, image export and independently installed manager')
+        print('[PASS] Docker port conflict, backup parser, cron, daily health/certificate checks and independently installed manager')
 
 
 def main():

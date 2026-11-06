@@ -11,7 +11,7 @@ from pty_driver import Driver
 
 
 ROOT_ACTIONS = ['status', 'start', 'stop', 'logs', 'updates', 'backups', 'domains', 'language',
-                'reset_password', 'maintenance', 'diagnose', 'self_update', 'exit']
+                'reset_password', 'maintenance', 'self_update', 'exit']
 
 
 class WorkflowTests(unittest.TestCase):
@@ -201,12 +201,12 @@ class WorkflowTests(unittest.TestCase):
         ui = self.launch()
         self.root(ui, 'backups', 'Selecciona un respaldo')
         ui.capture('15-backup-list')
-        ui.select(2, 'Detalle del respaldo')
+        ui.select(1, 'Detalle del respaldo')
         ui.capture('16-backup-detail')
         ui.send(b'\x1bOF\x1bOA\x1bOA\r', 'Revisar y confirmar')
         ui.send(b'\x1b', 'Selecciona un respaldo')
         self.assertEqual(self.calls(ui), [])
-        ui.select(2, 'Detalle del respaldo')
+        ui.select(1, 'Detalle del respaldo')
         ui.send(b'\x1bOF\x1bOA\x1bOA\r', 'Revisar y confirmar')
         self.accept(ui, 'Escribe RESTORE')
         ui.capture('17-restore-confirm')
@@ -298,28 +298,28 @@ class WorkflowTests(unittest.TestCase):
         self.accept(ui, 'Operación completada')
         self.assertEqual(self.calls(ui)[-1]['action'], 'remove_domain')
 
-    def test_backup_verify_export_and_create_workflows(self):
+    def test_backup_verify_and_create_workflows(self):
         ui = self.launch()
         self.root(ui, 'backups', 'Selecciona un respaldo')
-        ui.select(2, 'Detalle del respaldo')
+        ui.select(1, 'Detalle del respaldo')
         ui.send(b'\r', 'Integridad verificada')
         ui.capture('24-backup-verified')
-        ui.send(b'\r', 'Selecciona un respaldo')
-        ui.select(1, 'Operación completada')
         ui.send(b'\r', 'Selecciona un respaldo')
         ui.select(0, 'Revisar y confirmar')
         self.accept(ui, 'Operación completada')
         ui.send(b'\r', 'Selecciona un respaldo')
         self.assertEqual(self.calls(ui)[-1]['action'], 'backup')
 
-    def test_start_stop_diagnose_and_all_schedule_actions(self):
+    def test_start_stop_status_diagnostics_and_all_schedule_actions(self):
         ui = self.launch()
         for action in ('start', 'stop'):
             self.root(ui, action, '¿Detener los servicios?' if action == 'stop' else 'Operación completada')
             if action == 'stop':
                 self.accept(ui, 'Operación completada')
             ui.send(b'\r', 'Administrar Nextcloud')
-        self.root(ui, 'diagnose', 'Espacio libre')
+        # Server diagnostics now close the status view.
+        self.root(ui, 'status', 'Configuración web')
+        ui.send(b'\x1bOF', 'Espacio libre')
         ui.capture('25-diagnose')
         ui.send(b'\r', 'Administrar Nextcloud')
         self.root(ui, 'maintenance', 'Comprueba servicios')
@@ -437,11 +437,11 @@ class WorkflowTests(unittest.TestCase):
     def test_backup_delete_asks_and_returns_to_list(self):
         ui = self.launch()
         self.root(ui, 'backups', 'Selecciona un respaldo')
-        ui.select(2, 'Detalle del respaldo')
+        ui.select(1, 'Detalle del respaldo')
         ui.send(b'\x1bOF\x1bOA\r', '¿Eliminar este respaldo?')
         ui.send(b'\x1b', 'Selecciona un respaldo')
         self.assertTrue(any((ui.state / 'backups').glob('*.ndm.tar')))
-        ui.select(2, 'Detalle del respaldo')
+        ui.select(1, 'Detalle del respaldo')
         ui.send(b'\x1bOF\x1bOA\r', '¿Eliminar este respaldo?')
         self.accept(ui, 'Respaldo eliminado')
         self.assertFalse(any((ui.state / 'backups').glob('*.ndm.tar')))

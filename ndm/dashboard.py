@@ -10,12 +10,12 @@ GROUPS = [
     ('group_data', ('updates', 'backups', 'recover')),
     ('group_settings', ('domains', 'language')),
     ('group_accounts', ('reset_password',)),
-    ('group_checks', ('maintenance', 'diagnose')),
+    ('group_checks', ('maintenance',)),
     ('group_manager', ('self_update', 'exit')),
 ]
 STYLES = {'stop': 'warning', 'recover': 'warning', 'setup': 'ok', 'exit': 'accent'}
 # With an interrupted operation only recovery and read-only actions make sense.
-PENDING = {'recover', 'status', 'stop', 'logs', 'backups', 'maintenance', 'diagnose', 'language', 'self_update', 'exit'}
+PENDING = {'recover', 'status', 'stop', 'logs', 'backups', 'maintenance', 'language', 'self_update', 'exit'}
 
 
 def layout(ui, pending=False, configured=True, web_setup=False):

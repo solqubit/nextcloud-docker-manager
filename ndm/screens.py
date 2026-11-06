@@ -476,21 +476,17 @@ class Controller:
         focus = ''
         while True:
             paths = sorted((self.state.path / 'backups').glob('*.ndm.tar'), reverse=True)
-            rows = [('create', '▶ ' + self.term.t('backup'), 'ok'), ('export', self.term.t('export'), '')]
+            rows = [('create', '▶ ' + self.term.t('backup'), 'ok')]
             rows += [(SEPARATOR, '', '')] + (backup_rows(self.term, paths) or [(INFO, self.term.t('no_backups'), 'dim')])
             selected = next((i for i, row in enumerate(rows) if row[0] == focus), 0)
             notice, tone = self.notice_for(self.term.t('backup_scope'), 'warning')
             choice = self.menu('backups', rows, selected=selected, notice=notice, notice_style=tone,
-                               help_text=lambda key: self.term.t('export_help') if key == 'export'
-                               else self.term.t('backup_list_help'))
+                               help_text=self.term.t('backup_list_help'))
             if choice is None:
                 return
             if choice == 'create':
                 path = self.attempt(lambda: self.perform('backup', self.manager.backup))
                 focus = str(path) if path else ''
-            elif choice == 'export':
-                path = self.state.path / 'backups' / 'docker-images.tar'
-                self.attempt(lambda: self.perform('export', lambda: Engine(self.state).export_images(path)))
             else:
                 focus = choice
                 self.attempt(lambda: self.backup_detail(Path(choice)))
@@ -717,7 +713,10 @@ class Controller:
                 return
         from .cli import dispatch
         from argparse import Namespace
-        self.perform(action, lambda: dispatch(self.manager, Namespace(command=action)), style='accent' if action in ('status', 'diagnose') else 'ok')
+        # Status includes the server diagnostics (system, free space, last health check).
+        command = 'diagnose' if action == 'status' else action
+        self.perform(action, lambda: dispatch(self.manager, Namespace(command=command)),
+                     style='accent' if action == 'status' else 'ok')
 
     def run(self):
         while True:
