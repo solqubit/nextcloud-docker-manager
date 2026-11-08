@@ -90,10 +90,10 @@ def main():
         active.send(b'\r', 'Entorno de instalación')
         active.send(b'\x1bOB\r', 'mantenimiento oficial')
         active.send(b'\r', 'Configuración inicial')
-        for index, value in ((4, b'18880'), (5, b'18443')):
+        for index, value in ((5, b'18880'), (6, b'18443')):
             active.select(index, 'entre 1 y 65535')
             active.send(b'\x15' + value + b'\r', 'actualizado en el formulario')
-        active.select(7, 'Almacenamiento')
+        active.select(8, 'Almacenamiento')
         active.send(b'\x1bOB\r', 'actualizado en el formulario')
         active.capture('live-01-install-ready')
         active.send(b'\x1bOF\x1bOA\r', 'Confirmar instalación')

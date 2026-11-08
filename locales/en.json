@@ -404,5 +404,13 @@
   "choices": "Available LTS branches",
   "series": "Branch",
   "check_certificate": "Check HTTPS certificate",
-  "certificate_pending": "The HTTPS certificate is not issued yet. Check DNS, ports 80/443 or the tunnel; Caddy keeps retrying."
+  "certificate_pending": "The HTTPS certificate is not issued yet. Check DNS, ports 80/443 or the tunnel; Caddy keeps retrying.",
+  "field_database": "MariaDB",
+  "field_help_database": "Database LTS branch. The recommended one is the newest and has the most years of support.",
+  "database_branch": "MariaDB LTS branch",
+  "database_help": "Supported branches this Nextcloud version accepts. The recommended one has the most years of support; the previous one has been in use longer.",
+  "database_reset": "That Nextcloud version does not accept the chosen branch; MariaDB %s LTS was selected.",
+  "database_unavailable": "This Nextcloud version does not accept that MariaDB branch.",
+  "lookup_databases": "Check MariaDB branches",
+  "release_other": "Supported"
 }

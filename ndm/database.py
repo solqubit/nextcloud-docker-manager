@@ -21,6 +21,20 @@ class DatabaseMigration:
     # Warn and offer the next LTS this long before MariaDB Community support ends.
     SUPPORT_NOTICE_DAYS = 180
 
+    def database_options(self, version):
+        """LTS branches a new installation of this Nextcloud may use: Community support
+        still active and accepted by Nextcloud. Newest first; the first is recommended."""
+        accepted = set(self.catalog.requirements(version_tuple(version)[0])['mariadb'])
+        maintained = self.catalog.maintained_databases()['branches']
+        names = sorted((name for name in maintained if name in accepted),
+                       key=lambda name: version_tuple(name + '.0'), reverse=True)
+        if not names:
+            raise Error('No hay una LTS de MariaDB mantenida que acepte esta versión de Nextcloud / '
+                        'No maintained MariaDB LTS is accepted by this Nextcloud version')
+        return [{'series': name, 'community_until': maintained[name],
+                 'recommendation': 'latest' if index == 0 else 'previous' if index == 1 else 'other'}
+                for index, name in enumerate(names)]
+
     def database_support(self, cfg=None):
         """MariaDB Community support of the installed LTS. Nothing changes by itself:
         an ending or ended branch is kept while Nextcloud accepts it, and the next

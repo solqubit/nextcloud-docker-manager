@@ -48,17 +48,16 @@ class Manager(Maintenance, DatabaseMigration):
             version_tuple(version)
             self.catalog.require_supported(version)
             images = {'app': self.catalog.resolve('nextcloud', version + '-apache')}
-            maintained = self.catalog.maintained_databases()['branches']
+            options = [entry['series'] for entry in self.database_options(version)]
             if database_series is None:
-                # Newest LTS that still has Community support and that this Nextcloud accepts,
-                # so a fresh installation never starts on a branch close to its end.
-                accepted = set(self.catalog.requirements(version_tuple(version)[0])['mariadb'])
-                candidates = sorted((name for name in maintained if name in accepted), key=lambda name: version_tuple(name + '.0'))
-                if not candidates:
-                    raise Error('No hay una LTS de MariaDB mantenida que acepte esta versión de Nextcloud / '
-                                'No maintained MariaDB LTS is accepted by this Nextcloud version')
-                database_series = candidates[-1]
-            if database_series not in maintained:
+                # Recommended: the newest supported LTS this Nextcloud accepts, so a fresh
+                # installation never starts on a branch close to its end.
+                database_series = options[0]
+            if database_series not in options:
+                raise Error(f'MariaDB {database_series} no tiene soporte o no la acepta Nextcloud {version}; '
+                            f'disponibles: {", ".join(options)} / MariaDB {database_series} is unsupported or not '
+                            f'accepted by Nextcloud {version}; available: {", ".join(options)}')
+            if database_series not in self.catalog.maintained_databases()['branches']:
                 raise Error('La LTS de MariaDB elegida no tiene mantenimiento Community / Selected MariaDB LTS is not under Community maintenance')
             for role, repo, series in (('db', 'mariadb', database_series), ('redis', 'redis', '7.4'), ('proxy', 'caddy', '2')):
                 images[role] = self.catalog.resolve(repo, self.catalog.latest(repo, series))

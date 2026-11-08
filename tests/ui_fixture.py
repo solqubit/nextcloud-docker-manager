@@ -65,9 +65,14 @@ class FixtureManager:
                 'services': [dict(Service=role, State='running' if self.running() else 'exited', Health='healthy', Ports='8080->80/tcp' if role == 'proxy' else '')
                              for role in ('app', 'db', 'redis', 'proxy', 'cron')]}
 
-    def install(self, version, **settings):
+    def database_options(self, version):
+        return [{'series': '12.3', 'community_until': '2031-06-01', 'recommendation': 'latest'},
+                {'series': '11.8', 'community_until': '2030-06-01', 'recommendation': 'previous'},
+                {'series': '11.4', 'community_until': '2029-05-29', 'recommendation': 'other'}]
+
+    def install(self, version, *, database_series=None, **settings):
         confirm('INSTALL')
-        self.record('install', version=version, **settings)
+        self.record('install', version=version, database_series=database_series, **settings)
         with stage('Descargar imágenes / Download images'):
             print('PRIVATE-DIAGNOSTIC-NOT-A-UI-LABEL')
             time.sleep(0.45)

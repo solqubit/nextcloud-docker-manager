@@ -110,6 +110,15 @@ def release_rows(ui, releases):
     return result
 
 
+def database_rows(ui, options):
+    rows = []
+    for option in options:
+        label = (f'MariaDB {option["series"]} LTS · {ui.t("release_" + option["recommendation"])} · '
+                 f'{ui.t("release_until", option["community_until"][:7])}')
+        rows.append((option['series'], label, 'ok' if option['recommendation'] == 'latest' else 'accent'))
+    return rows
+
+
 def pair(ui, label, value, tone='accent', width=76):
     """Aligned dim labels and colored values, wrapping paths rather than hiding them."""
     label = ui.msg.get('label_' + label, ui.t(label))

@@ -404,5 +404,13 @@
   "choices": "Ramas LTS disponibles",
   "series": "Rama",
   "check_certificate": "Comprobar certificado HTTPS",
-  "certificate_pending": "El certificado HTTPS aún no se ha emitido. Revisa el DNS, los puertos 80/443 o el túnel; Caddy seguirá intentándolo."
+  "certificate_pending": "El certificado HTTPS aún no se ha emitido. Revisa el DNS, los puertos 80/443 o el túnel; Caddy seguirá intentándolo.",
+  "field_database": "MariaDB",
+  "field_help_database": "Rama LTS de la base de datos. La recomendada es la más reciente y tiene más años de soporte.",
+  "database_branch": "Rama LTS de MariaDB",
+  "database_help": "Ramas con soporte que acepta esta versión de Nextcloud. La recomendada tiene más años de soporte; la anterior lleva más tiempo en uso.",
+  "database_reset": "Esa versión de Nextcloud no acepta la rama elegida; se seleccionó MariaDB %s LTS.",
+  "database_unavailable": "Esta versión de Nextcloud no acepta esa rama de MariaDB.",
+  "lookup_databases": "Consultar ramas de MariaDB",
+  "release_other": "Con soporte"
 }

@@ -30,6 +30,7 @@ def parser():
     sub.add_parser('menu')
     install = sub.add_parser('install')
     install.add_argument('--nextcloud-version')
+    install.add_argument('--database', help='MariaDB LTS series, for example 11.8; default: newest supported LTS accepted by Nextcloud')
     install.add_argument('--environment', choices=['lan', 'vps'], default='lan')
     install.add_argument('--address', default='127.0.0.1')
     install.add_argument('--bind', default='127.0.0.1')
@@ -110,7 +111,7 @@ def dispatch(manager, args):
     command = args.command
     state = manager.state
     if command == 'install':
-        return manager.install(args.nextcloud_version, supplied=args.confirm,
+        return manager.install(args.nextcloud_version, supplied=args.confirm, database_series=args.database,
             **{key: getattr(args, key) for key in ('environment', 'address', 'bind', 'http_port', 'https_port', 'timezone', 'storage', 'storage_root')},
             language=args.lang or remembered_language(state) or 'es')
     if not state.configured:

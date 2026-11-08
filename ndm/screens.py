@@ -19,7 +19,7 @@ from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
 from .system import host_info
 from .terminal_ui import INFO, SEPARATOR, Terminal
-from .views import (SERVICES, backup_rows, domain_actions, domain_summary, operation_summary, pair, release_rows,
+from .views import (SERVICES, backup_rows, database_rows, domain_actions, domain_summary, operation_summary, pair, release_rows,
                     result_rows, support_summary, update_rows)
 
 
@@ -32,8 +32,11 @@ def folder(value):
 
 class Form:
     """In-memory drafts. Escape never writes configuration or changes services."""
-    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=(), submit=None):
+    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=(), submit=None,
+                 databases=(), database_lookup=None):
         self.view, self.ui, self.title = console, console.term, title
+        # MariaDB LTS branches for the chosen Nextcloud; refreshed when the version changes.
+        self.databases, self.database_lookup = list(databases), database_lookup
         self.data, self.original = copy.deepcopy(data), copy.deepcopy(data)
         self._fields, self.installed, self.versions = fields, installed, versions
         self.releases = releases
@@ -48,12 +51,16 @@ class Form:
 
     def display(self, key, value=None):
         value = self.data[key] if value is None else value
+        if key == 'database':
+            return f'MariaDB {value} LTS'
         if key in ('environment', 'storage', 'publish'):
             return self.ui.t(('environment_' + value) if key == 'environment' else
                              ('yes' if value else 'no') if key == 'publish' else value)
         return str(value) if value != '' else self.ui.t('optional' if key == 'email' else 'pending_value')
 
     def normalize(self, key, value):
+        if key == 'database' and self.databases and value not in [entry['series'] for entry in self.databases]:
+            raise Error(self.ui.t('database_unavailable'))
         if key.endswith('_port'):
             return port(value)
         if key == 'bind':
@@ -140,6 +147,11 @@ class Form:
             value = self.view.pick(key, release_rows(self.ui, self.releases) if self.releases else
                                    [(v, 'Nextcloud ' + v, '') for v in self.versions],
                                    selected=self.versions.index(data[key]))
+        elif key == 'database':
+            names = [entry['series'] for entry in self.databases]
+            value = self.view.pick('database_branch', database_rows(self.ui, self.databases),
+                                   selected=names.index(data[key]) if data[key] in names else 0,
+                                   notice=self.ui.t('database_help'))
         elif key == 'timezone':
             value = self.timezone()
         elif key in ('bind', 'address'):
@@ -169,6 +181,13 @@ class Form:
             self.data[key] = value
             self.invalid = ''
             self.notice, self.notice_style = self.ui.t('field_saved', self.ui.t(key)), 'ok'
+            if key == 'version' and self.database_lookup:
+                # Each Nextcloud version accepts its own MariaDB branches.
+                self.databases = self.view.run('lookup_databases', lambda: self.database_lookup(value))
+                names = [entry['series'] for entry in self.databases]
+                if self.data.get('database') not in names:
+                    self.data['database'] = names[0]
+                    self.notice, self.notice_style = self.ui.t('database_reset', names[0]), 'warning'
             if key == 'environment' and value == 'vps' and (data.get('bind'), data.get('address')) != ('127.0.0.1',) * 2:
                 self.data.update(bind='127.0.0.1', address='127.0.0.1')
                 self.notice = self.ui.t('vps_loopback_set')
@@ -185,7 +204,8 @@ class Form:
     def run(self):
         while True:
             if 'version' in self.data:
-                self.ui.context = f'Nextcloud {self.data["version"]} · MariaDB LTS'
+                database = self.data.get('database')
+                self.ui.context = f'Nextcloud {self.data["version"]} · MariaDB {database + " " if database else ""}LTS'
             review = self.reviewing
             def screen():
                 rows = self.rows(review)
@@ -313,11 +333,14 @@ class Controller:
                                  notice=self.term.t('version_help'))
         if version is None:
             return
+        databases = self.view.run('lookup_databases', lambda: self.manager.database_options(version))
         info = host_info()
         address = info['address'] if environment == 'lan' else '127.0.0.1'
-        data = dict(version=version, environment=environment, bind=address, address=address, http_port=DEFAULT_HTTP_PORT,
+        data = dict(version=version, database=databases[0]['series'], environment=environment, bind=address,
+                    address=address, http_port=DEFAULT_HTTP_PORT,
                     https_port=DEFAULT_HTTPS_PORT, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
-        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases, submit='install')
+        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases, submit='install',
+                    databases=databases, database_lookup=self.manager.database_options)
         if info['panel_detected']:
             form.notice, form.notice_style = self.term.t('ports_existing'), 'warning'
         while True:
@@ -333,10 +356,13 @@ class Controller:
                 form.notice, form.notice_style, form.reviewing = self.view.local(str(exc)), 'error', False
                 continue
             version = draft.pop('version')
+            database = draft.pop('database')
             local_url = f'http://{draft["address"]}' + (f':{draft["http_port"]}' if draft['http_port'] != 80 else '')
             try:
-                self.perform('install', lambda: self.manager.install(version, language=self.language, **draft),
-                             context=[('Nextcloud', version), (self.term.t('access_local'), local_url)])
+                self.perform('install', lambda: self.manager.install(version, language=self.language,
+                                                                     database_series=database, **draft),
+                             context=[('Nextcloud', version), ('MariaDB', database + ' LTS'),
+                                      (self.term.t('access_local'), local_url)])
             except Cancelled:
                 if self.state.configured or self.state.pending:
                     raise
