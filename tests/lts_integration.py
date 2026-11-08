@@ -19,7 +19,7 @@ def run(root):
     state = State(root / 'lts').open()
     try:
         manager = Manager(state)
-        manager.install('33.0.10', storage='named', http_port=38880, https_port=38443, supplied='INSTALL')
+        manager.install('33.0.10', storage='named', http_port=38880, https_port=38443, database_series='11.4', supplied='INSTALL')
         suite = Suite(state)
         suite.prepare()
         original = state.load()

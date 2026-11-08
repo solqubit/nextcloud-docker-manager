@@ -40,7 +40,8 @@ def password_recovery():
         shown = '\n'.join(ui.screen.display)
         assert 'Cuentas' in shown and 'Cambiar contraseña' in shown
         ui.capture('live-11-accounts-on-dashboard')
-        actions = [key for _, keys in GROUPS for key in keys if key not in ('setup', 'recover')]
+        # Running services hide Start; setup and recover only appear when pending.
+        actions = [key for _, keys in GROUPS for key in keys if key not in ('setup', 'recover', 'start')]
         ui.send(b'\x1bOH' + b'\t' * actions.index('reset_password') + b'\r', 'Selecciona una cuenta')
         ui.send(b'\r', 'Nueva contraseña')
         assert old['user'] in '\n'.join(ui.screen.display)
@@ -121,8 +122,8 @@ def main():
         active = launch()
         assert 'Comprobar instalación web' in '\n'.join(active.screen.display)
         active.capture('live-04-pending-setup')
-        # The pending setup action precedes start/stop, so Backups is seventh here.
-        active.send(b'\x1bOH' + b'\t' * 6 + b'\r', 'Selecciona un respaldo')
+        # Status, pending setup, Stop (Start is hidden while running), Logs, Updates, Backups.
+        active.send(b'\x1bOH' + b'\t' * 5 + b'\r', 'Selecciona un respaldo')
         active.send(b'\r', 'Revisar y confirmar')
         active.send(b'\x1bOB\r', 'Respaldo SQL y aplicación')
         active.read(0.4)

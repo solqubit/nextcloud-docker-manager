@@ -10,8 +10,9 @@ import unittest
 from pty_driver import Driver
 
 
-ROOT_ACTIONS = ['status', 'start', 'stop', 'logs', 'updates', 'backups', 'domains', 'language',
-                'reset_password', 'maintenance', 'self_update', 'exit']
+# Services start running, so Start is hidden until something is stopped.
+ROOT_ACTIONS = ['status', 'stop', 'logs', 'updates', 'backups', 'domains', 'language',
+                'reset_password', 'maintenance', 'cleanup', 'self_update', 'exit']
 
 
 class WorkflowTests(unittest.TestCase):
@@ -312,11 +313,14 @@ class WorkflowTests(unittest.TestCase):
 
     def test_start_stop_status_diagnostics_and_all_schedule_actions(self):
         ui = self.launch()
-        for action in ('start', 'stop'):
-            self.root(ui, action, '¿Detener los servicios?' if action == 'stop' else 'Operación completada')
-            if action == 'stop':
-                self.accept(ui, 'Operación completada')
-            ui.send(b'\r', 'Administrar Nextcloud')
+        self.assertNotIn('Iniciar servicios', '\n'.join(ui.screen.display))
+        self.root(ui, 'stop', '¿Detener los servicios?')
+        self.accept(ui, 'Operación completada')
+        ui.send(b'\r', 'Administrar Nextcloud')
+        # Once stopped, Start takes Stop's place.
+        self.assertNotIn('Detener servicios', '\n'.join(ui.screen.display))
+        ui.send(b'\x1bOH\t\r', 'Operación completada')
+        ui.send(b'\r', 'Administrar Nextcloud')
         # Server diagnostics now close the status view.
         self.root(ui, 'status', 'Configuración web')
         ui.send(b'\x1bOF', 'Espacio libre')
@@ -331,7 +335,7 @@ class WorkflowTests(unittest.TestCase):
             ui.send(b'\r', 'Comprueba servicios')
         ui.send(b'\x1b', 'Administrar Nextcloud')
         self.assertEqual([row['action'] for row in self.calls(ui)],
-                         ['engine_start', 'engine_stop', 'maintenance', 'schedule', 'schedule'])
+                         ['engine_stop', 'engine_start', 'maintenance', 'schedule', 'schedule'])
 
     def test_failed_operation_and_failed_checks_are_visible(self):
         ui = self.launch()
@@ -419,7 +423,7 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('30-resized-dashboard')
         # On the dashboard Esc exits, and the legend says so.
         self.assertIn('Esc Salir', '\n'.join(ui.screen.display))
-        ui.send(b'\t\t')
+        ui.send(b'\t')
         ui.resize(100, 32)
         ui.capture('31-expanded-dashboard')
         ui.send(b'\r', '¿Detener los servicios?')

@@ -10,7 +10,7 @@ import ssl
 import time
 
 from . import archive
-from .core import Error, ROOT, Runner, VERSION, atomic, confirm, version_tuple
+from .core import LABEL, Error, ROOT, Runner, VERSION, atomic, confirm, version_tuple
 from .docker import Engine
 
 
@@ -110,7 +110,23 @@ class Maintenance:
             def updates():
                 result['updates'] = self.checks()
 
+            def database():
+                support = self.database_support(engine.cfg)
+                result['database'] = support
+                newest = (' → ' + support['choices'][-1]['series']) if support['choices'] else ''
+                if support['state'] == 'eol':
+                    result['errors'].append(f'MariaDB {support["current"]} ya no tiene soporte; cambia de LTS en Actualizaciones{newest} / '
+                                            f'MariaDB {support["current"]} is out of support; change LTS in Updates{newest}')
+                elif support['state'] == 'ending':
+                    result['warnings'].append(f'El soporte de MariaDB {support["current"]} termina el {support["community_until"]}{newest} / '
+                                              f'MariaDB {support["current"]} support ends on {support["community_until"]}{newest}')
+
             def backup():
+                if not self.state.locked:
+                    # Another manager session is open: never race it over backup staging folders.
+                    result['warnings'].append('El gestor estaba abierto; se omitió verificar el respaldo / '
+                                              'The manager was open; backup verification skipped')
+                    return
                 backups = sorted((self.state.path / 'backups').glob('*.ndm.tar'))
                 if backups:
                     with archive.unpack(self.state, backups[-1]):
@@ -128,7 +144,7 @@ class Maintenance:
             def certificates():
                 result['certificates'] = self.check_certificates(engine)
 
-            for function in (service, updates, backup, cron, certificates):
+            for function in (service, updates, database, backup, cron, certificates):
                 check(function)
         else:
             result['errors'].append('Nextcloud está detenido o falta la instalación web / Nextcloud is stopped or web installation is pending')
@@ -136,13 +152,72 @@ class Maintenance:
         if result['free_bytes'] < 2 * 1024 ** 3:
             result['errors'].append('Menos de 2 GiB libres para el gestor / Less than 2 GiB free on manager filesystem')
         atomic(self.state.path / 'last-maintenance.json', result)
+        if not self.state.locked:
+            return result
         for path in sorted((self.state.path / 'logs').glob('*.log'))[:-30]:
             if path.is_file() and not path.is_symlink() and path != self.state.log_path:
                 path.unlink()
         return result
 
+    def wait_certificate(self, name, timeout=90):
+        """After adding a public domain: a 308 redirect alone does not prove HTTPS works.
+        False means not issued yet (DNS, ports 80/443 or the tunnel); Caddy keeps retrying."""
+        engine = Engine(self.state)
+        until = time.monotonic() + timeout
+        while True:
+            if any(name in item['names'] for item in self.read_certificates(engine)):
+                return True
+            if time.monotonic() > until:
+                return False
+            time.sleep(5)
+
+    def cleanup_candidates(self):
+        """Volumes this installation no longer uses (left by restores and LTS changes) and
+        configuration revisions older than the five newest. Never the active ones."""
+        if self.state.pending:
+            raise Error('Hay una operación pendiente: usa Recuperar / Pending operation: use recover')
+        cfg = self.state.load()
+        runner = Runner(self.state)
+        names = runner.run(['docker', 'volume', 'ls', '--quiet', '--filter',
+                            f'label={LABEL}.installation={cfg["id"]}']).stdout.split()
+        volumes = sorted(name for name in names if name not in set(cfg['volumes'].values()))
+        current = (self.state.path / 'current').resolve()
+        revisions = sorted(path for path in (self.state.path / 'revisions').iterdir()
+                           if path.is_dir() and not path.is_symlink())
+        old = [path for path in revisions[:-5] if path != current]
+        return {'volumes': volumes, 'revisions': [path.name for path in old]}
+
+    def cleanup(self, supplied=None):
+        found = self.cleanup_candidates()
+        if not found['volumes'] and not found['revisions']:
+            return {'removed_volumes': [], 'removed_revisions': 0}
+        confirm('CLEANUP', supplied, ', '.join(found['volumes']))
+        engine = Engine(self.state)
+        root = Path(engine.cfg['storage_root']) / engine.cfg['id']
+        active = {engine.volume_path(role).resolve() for role in engine.cfg['volumes']} if engine.cfg['storage'] == 'directory' else set()
+        removed, kept = [], []
+        for name in found['volumes']:
+            info = engine.inspect('volume', name)
+            if not info:
+                continue
+            engine.owned(info, 'volume')
+            if engine.runner.run(['docker', 'volume', 'rm', name], check=False).returncode:
+                kept.append(name)
+                continue
+            removed.append(name)
+            # Server-folder storage keeps the files after the volume is removed.
+            # Docker reports "Options": null for plain named volumes.
+            device = (info.get('Options') or {}).get('device')
+            if device:
+                folder = Path(device).resolve()
+                if folder.is_relative_to(root.resolve()) and folder not in active and folder.is_dir():
+                    shutil.rmtree(folder)
+        for name in found['revisions']:
+            shutil.rmtree(self.state.path / 'revisions' / name)
+        return {'removed_volumes': removed, 'removed_revisions': len(found['revisions']), 'in_use': kept}
+
     @staticmethod
-    def check_certificates(engine):
+    def read_certificates(engine):
         result = engine.runner.run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'sh',
                     '--mount', 'type=volume,src=' + engine.cfg['volumes']['proxy_data'] + ',dst=/data,readonly',
                     engine.cfg['images']['proxy'], '-ec',
@@ -156,6 +231,11 @@ class Maintenance:
             remaining = int(ssl.cert_time_to_seconds(decoded['notAfter']) - time.time())
             certificates.append({'names': names, 'seconds_remaining': remaining, 'days_remaining': round(remaining / 86400, 2)})
             path.unlink()
+        return certificates
+
+    @classmethod
+    def check_certificates(cls, engine):
+        certificates = cls.read_certificates(engine)
         missing = [e['host'] for e in engine.cfg['domains'] if e['tls'] != 'off'
                    and not any(e['host'] in c['names'] for c in certificates)]
         if missing:

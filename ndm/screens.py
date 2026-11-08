@@ -185,7 +185,7 @@ class Form:
     def run(self):
         while True:
             if 'version' in self.data:
-                self.ui.context = f'Nextcloud {self.data["version"]} · MariaDB 11.4 LTS'
+                self.ui.context = f'Nextcloud {self.data["version"]} · MariaDB LTS'
             review = self.reviewing
             def screen():
                 rows = self.rows(review)
@@ -382,7 +382,11 @@ class Controller:
                 url += f'\nHost: {name}\nForward: http://{forward}:{cfg["http_port"]}'
                 if self.state.load()['primary'] == name:
                     note = self.term.t('tunnel_primary_saved')
-            self.report(action, url, notice=note)
+            style = 'ok'
+            # A redirect alone does not prove HTTPS works: wait briefly for the real certificate.
+            if mode != 'local' and not self.view.run('check_certificate', lambda: self.manager.wait_certificate(name)):
+                note, style = note + '\n' + self.term.t('certificate_pending'), 'warning'
+            self.report(action, url, notice=note, style=style)
         elif action == 'network':
             keys = ('bind', 'http_port', 'https_port')
             # One review only: the confirmation screen after the form already lists the change.
@@ -567,6 +571,8 @@ class Controller:
                 kind = key.partition(':')[0]
                 if kind == 'major' and available.get('patches'):
                     return self.term.t('major_needs_patch')
+                if kind == 'lts':
+                    return self.term.t('lts_change_help')
                 return self.term.t('components_help' if kind == 'component' else 'updates_help')
             choice = self.menu('updates', rows, notice=notice, notice_style=tone, help_text=describe)
             if choice is None:
@@ -576,6 +582,9 @@ class Controller:
 
     def apply_update(self, choice, cfg, available):
         kind, _, target = choice.partition(':')
+        if kind == 'lts':
+            return self.perform('lts_change', lambda: self.manager.migrate_database(target),
+                                context=[('MariaDB', available['database']['current'] + ' → ' + target + ' LTS')])
         if kind == 'component':
             return self.perform('components', lambda: self.manager.update_component(target),
                                 context=[(SERVICES[target], available['components'][target]['available'])])
@@ -705,6 +714,20 @@ class Controller:
             return
         if action == 'setup':
             return self.perform(action, self.manager.setup_check)
+        if action == 'cleanup':
+            found = self.view.run('cleanup', self.manager.cleanup_candidates)
+            if not found['volumes'] and not found['revisions']:
+                return self.report('cleanup', self.term.t('cleanup_nothing'), style='accent')
+            rows = [(INFO, 'Docker volume · ' + name, '') for name in found['volumes']]
+            if found['revisions']:
+                rows.append((INFO, self.term.t('cleanup_revisions', len(found['revisions'])), ''))
+            rows += [(SEPARATOR, '', ''), ('back', '← ' + self.term.t('cancel'), 'accent'),
+                     ('cleanup', self.term.t('cleanup_apply'), 'warning')]
+            choice = self.view.pick('cleanup', rows, selected=len(rows) - 2, notice=self.term.t('cleanup_help'),
+                                    notice_style='warning', help_text=self.term.t('cleanup_help'))
+            if choice == 'cleanup':
+                self.perform('cleanup', lambda: self.manager.cleanup(supplied='CLEANUP'))
+            return
         if action == 'stop':
             choice = self.view.pick('confirm_stop', [('back', '← ' + self.term.t('back'), 'accent'),
                                                      ('stop', self.term.t('stop'), 'warning')],

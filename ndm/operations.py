@@ -40,7 +40,7 @@ class Manager(Maintenance, DatabaseMigration):
                 return str(candidate)
         raise Error('No hay una subred privada libre / No private subnet available')
 
-    def install(self, version=None, *, supplied=None, database_series='11.4', **settings):
+    def install(self, version=None, *, supplied=None, database_series=None, **settings):
         if self.state.configured:
             raise Error('Ya existe una instalación; usa el menú / Installation already configured')
         with stage('Consultar imágenes oficiales / Resolve official images'):
@@ -48,7 +48,17 @@ class Manager(Maintenance, DatabaseMigration):
             version_tuple(version)
             self.catalog.require_supported(version)
             images = {'app': self.catalog.resolve('nextcloud', version + '-apache')}
-            if database_series not in self.catalog.maintained_databases()['branches']:
+            maintained = self.catalog.maintained_databases()['branches']
+            if database_series is None:
+                # Newest LTS that still has Community support and that this Nextcloud accepts,
+                # so a fresh installation never starts on a branch close to its end.
+                accepted = set(self.catalog.requirements(version_tuple(version)[0])['mariadb'])
+                candidates = sorted((name for name in maintained if name in accepted), key=lambda name: version_tuple(name + '.0'))
+                if not candidates:
+                    raise Error('No hay una LTS de MariaDB mantenida que acepte esta versión de Nextcloud / '
+                                'No maintained MariaDB LTS is accepted by this Nextcloud version')
+                database_series = candidates[-1]
+            if database_series not in maintained:
                 raise Error('La LTS de MariaDB elegida no tiene mantenimiento Community / Selected MariaDB LTS is not under Community maintenance')
             for role, repo, series in (('db', 'mariadb', database_series), ('redis', 'redis', '7.4'), ('proxy', 'caddy', '2')):
                 images[role] = self.catalog.resolve(repo, self.catalog.latest(repo, series))
@@ -370,7 +380,14 @@ class Manager(Maintenance, DatabaseMigration):
                 'patches': patches, 'next_major': next_major,
                 'refreshed_image': ref != cfg['images']['app'],
                 'branches': [v for v in branches if self.catalog.support_status(v)['state'] in ('supported', 'ending')],
-                'components': components}
+                'components': components, 'database': self.database_support_or_unknown(cfg)}
+
+    def database_support_or_unknown(self, cfg):
+        # mariadb.org being unreachable must not hide Nextcloud and component updates.
+        try:
+            return self.database_support(cfg)
+        except (Error, OSError, ValueError) as exc:
+            return {'state': 'unknown', 'choices': [], 'error': str(exc)}
 
     def rehearse(self, path, target, app_image=None, db_image=None, components=None):
         """Actual SQL + application clone, excluding all user files and external networking."""

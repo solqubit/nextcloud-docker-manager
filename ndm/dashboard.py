@@ -10,7 +10,7 @@ GROUPS = [
     ('group_data', ('updates', 'backups', 'recover')),
     ('group_settings', ('domains', 'language')),
     ('group_accounts', ('reset_password',)),
-    ('group_checks', ('maintenance',)),
+    ('group_checks', ('maintenance', 'cleanup')),
     ('group_manager', ('self_update', 'exit')),
 ]
 STYLES = {'stop': 'warning', 'recover': 'warning', 'setup': 'ok', 'exit': 'accent'}
@@ -18,7 +18,7 @@ STYLES = {'stop': 'warning', 'recover': 'warning', 'setup': 'ok', 'exit': 'accen
 PENDING = {'recover', 'status', 'stop', 'logs', 'backups', 'maintenance', 'language', 'self_update', 'exit'}
 
 
-def layout(ui, pending=False, configured=True, web_setup=False):
+def layout(ui, pending=False, configured=True, web_setup=False, hidden=()):
     groups = GROUPS if configured else [('group_install', ('install', 'language', 'exit'))]
     if not configured and pending:
         groups = [('group_install', ('recover', 'install', 'language', 'exit'))]
@@ -29,7 +29,7 @@ def layout(ui, pending=False, configured=True, web_setup=False):
         for title, actions in entries:
             visible = [value for value in actions
                        if (value != 'recover' or pending) and (value != 'setup' or web_setup)
-                       and (not pending or not configured or value in PENDING)]
+                       and (not pending or not configured or value in PENDING) and value not in hidden]
             if not visible:
                 continue
             headers.append((column, row, ui.t(title)))
@@ -56,6 +56,15 @@ def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=No
     cfg = state.load() if configured else {}
     # «Check web installation» is only offered, and preselected, until it has completed.
     web_setup = configured and cfg['status'] != 'ready'
+    # Offer Start only when something is stopped and Stop only when something runs;
+    # without a status snapshot both stay available.
+    services = (status or {}).get('services', [])
+    running = [row for row in services if row.get('State') == 'running']
+    hidden = set()
+    if services and len(running) == len(services):
+        hidden.add('start')
+    if services and not running:
+        hidden.add('stop')
     if configured:
         ui.context = f'Nextcloud {cfg["version"]} · MariaDB {cfg["images"]["db"].split("@")[0].split(":")[-1]}'
         app = (status or {}).get('status', {})
@@ -81,14 +90,14 @@ def dashboard(ui, state, *, last='', notice='', notice_style='accent', status=No
             tone = 'error'
     if ui.screen is None:
         ui.width = 76
-        cells, _, _ = layout(ui, pending, configured, web_setup)
+        cells, _, _ = layout(ui, pending, configured, web_setup, hidden)
         return ui.menu(ui.t('menu'), [(cell['value'], cell['label'], STYLES.get(cell['value'], ''))
                                      for cell in cells], notice=notice or summary)
     selected = None
     while True:
         ui.measure()
         top, height = ui.frame(ui.t('menu'), summary[:ui.width - 4], tone)
-        cells, headers, columns = layout(ui, pending, configured, web_setup)
+        cells, headers, columns = layout(ui, pending, configured, web_setup, hidden)
         if not configured and ui.width >= 66 and height >= 24:
             for n, line in enumerate(BANNER):
                 ui.put(top + n, ui.left, line, 'title')

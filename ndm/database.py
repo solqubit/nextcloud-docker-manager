@@ -1,5 +1,6 @@
 """Logical migration between maintained MariaDB LTS branches; original SQL stays intact."""
 import copy
+import datetime as dt
 import json
 import secrets
 
@@ -8,7 +9,39 @@ from .core import Error, confirm, version_tuple
 from .docker import Engine
 
 
+def series(ref):
+    return '.'.join(ref.split(':', 1)[1].split('@')[0].split('.')[:2])
+
+
+def newer(left, right):
+    return version_tuple(left + '.0') > version_tuple(right + '.0')
+
+
 class DatabaseMigration:
+    # Warn and offer the next LTS this long before MariaDB Community support ends.
+    SUPPORT_NOTICE_DAYS = 180
+
+    def database_support(self, cfg=None):
+        """MariaDB Community support of the installed LTS. Nothing changes by itself:
+        an ending or ended branch is kept while Nextcloud accepts it, and the next
+        maintained LTS accepted by the current Nextcloud is only offered."""
+        cfg = cfg or self.state.load()
+        current = series(cfg['images']['db'])
+        policy = self.catalog.maintained_databases()
+        until = policy['branches'].get(current)
+        if until is None:
+            state = 'eol'
+        else:
+            remaining = (dt.date.fromisoformat(until) - dt.datetime.now(dt.timezone.utc).date()).days
+            state = 'ending' if remaining <= self.SUPPORT_NOTICE_DAYS else 'supported'
+        choices = []
+        if state != 'supported':
+            allowed = set(self.catalog.requirements(version_tuple(cfg['version'])[0])['mariadb'])
+            choices = [{'series': name, 'community_until': end} for name, end in sorted(policy['branches'].items())
+                       if name in allowed and newer(name, current)]
+        return {'current': current, 'community_until': until, 'state': state, 'choices': choices,
+                'source': policy['source']}
+
     def database_choices(self, for_nextcloud=None):
         cfg = self.state.load()
         current = '.'.join(cfg['images']['db'].split(':', 1)[1].split('@')[0].split('.')[:2])
@@ -29,12 +62,22 @@ class DatabaseMigration:
     def migrate_database(self, target, *, for_nextcloud=None, supplied=None):
         original = self.ready()
         cfg = original.cfg
-        choices = self.database_choices(for_nextcloud)
-        if not choices['required']:
-            raise Error('La MariaDB actual ya cumple los requisitos; no se permite cambiar de LTS / Current MariaDB already meets the requested Nextcloud requirements; LTS change is not permitted')
-        if self.catalog.patches(version_tuple(cfg['version'])[0])[0] != cfg['version']:
-            raise Error('Aplica primero el último parche de la rama actual / Install the latest patch of the current Nextcloud major before preparing its upgrade')
-        nextcloud_image = self.catalog.resolve('nextcloud', for_nextcloud + '-apache')
+        if for_nextcloud:
+            # Required by the next Nextcloud major.
+            choices = self.database_choices(for_nextcloud)
+            if not choices['required']:
+                raise Error('La MariaDB actual ya cumple los requisitos; no se permite cambiar de LTS / Current MariaDB already meets the requested Nextcloud requirements; LTS change is not permitted')
+            if self.catalog.patches(version_tuple(cfg['version'])[0])[0] != cfg['version']:
+                raise Error('Aplica primero el último parche de la rama actual / Install the latest patch of the current Nextcloud major before preparing its upgrade')
+            nextcloud_image = self.catalog.resolve('nextcloud', for_nextcloud + '-apache')
+        else:
+            # Offered when the installed LTS is near or past the end of Community support.
+            choices = self.database_support(cfg)
+            if choices['state'] == 'supported':
+                until = choices['community_until']
+                raise Error(f'MariaDB {choices["current"]} tiene soporte hasta {until}; no hace falta cambiar de LTS / '
+                            f'MariaDB {choices["current"]} is supported until {until}; no LTS change is needed')
+            nextcloud_image = None
         if target not in [entry['series'] for entry in choices['choices']]:
             raise Error('Elige una LTS posterior compatible con ambas versiones de Nextcloud / Choose a later maintained LTS compatible with the current and requested Nextcloud versions')
         image = self.catalog.resolve('mariadb', self.catalog.latest('mariadb', target))

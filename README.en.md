@@ -44,7 +44,7 @@ After installation: `sudo bash /opt/nextcloud-docker-manager/start.sh --lang en`
 Use **Domains and access** to add or remove hosts and IP addresses and change ports. Keep the local address to retain local access.
 Each access type shows saved addresses first and offers adding another. The first public domain, tunnel or direct, becomes primary if no other public domain exists; adding more retains your choice.
 
-- **Cloudflare Tunnel:** install cloudflared manually, route the hostname to `http://LOCAL_IP:HTTP_PORT`, and add that domain in tunnel mode in the manager.
+- **Cloudflare Tunnel:** install cloudflared manually, route the hostname to `http://LOCAL_IP:HTTP_PORT`, and add that domain in tunnel mode in the manager. The manager also obtains its own certificate for that domain, which the desktop and mobile clients need to sync; if you use Cloudflare Access, exclude `/.well-known/acme-challenge/*` so it can renew. When adding a public domain, the manager waits up to 90 seconds for the certificate and warns if it is not issued yet.
 - **Direct VPS:** point IPv4 DNS to the server, add the domain and publish TCP 80/443; allow these ports in the firewall too.
 
 Caddy requests and renews the certificate. HTTP-01 validation must reach the proxy, and the tunnel must preserve the hostname. Local HTTP and public HTTPS can coexist. Unencrypted HTTP routes (local addresses and the tunnel origin) only answer clients on private networks (LAN, Docker, Tailscale), even when the proxy listens on 0.0.0.0. Optional local HTTPS requires trusting the CA exported from the menu.
@@ -73,9 +73,10 @@ Backups contain SQL, application state and certificates. **They exclude `data/<i
 Use **Accounts → Reset password** on the main menu to select an account and enter a new password twice. The current password cannot be displayed. The manager does not log the new password; server-side encryption requires Nextcloud's specific recovery process to retain access to encrypted files. Restoring SQL also restores the passwords that existed in that backup.
 
 - **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
-- **MariaDB:** keeps `11.4.x`. Changing LTS is allowed only when required by the target Nextcloud.
+- **MariaDB:** new installations use the newest supported LTS that the chosen Nextcloud accepts. An existing installation keeps its branch even after its support ends, while Nextcloud accepts it. An LTS change is offered in **Updates** when Nextcloud requires it or when 180 days or fewer remain before end of support, and it is never applied by itself.
 - **Redis and Caddy:** replaced without maintenance mode, with a cut of about one second while Caddy restarts (no backup or rehearsal, since they never touch the database) and reverted if they fail.
-- **Health checks:** services, cron, certificates, space, official support, available updates and the latest backup's integrity. Warns near end of support and marks expired branches as obsolete. The daily schedule (a systemd timer) never applies updates and exits with an error when it finds problems.
+- **Health checks:** services, cron, certificates, space, official support, available updates and the latest backup's integrity. Warns near end of support and marks expired branches as obsolete. It also warns about MariaDB end of support. The daily schedule (a systemd timer) never applies updates, exits with an error when it finds problems and runs even while the menu is open (it then skips backup verification).
+- **Free up space:** removes, after confirmation, volumes left by restores and LTS changes and old configuration revisions (the five newest are kept). Data in use and backups are untouched.
 
 **Updates** shows patches, the next major, image refresh and components on one screen. Before updating, free space is checked while Nextcloud is online; then the manager enables maintenance, backs up SQL/application state, and rehearses the change with actual SQL in isolated containers without documents. If the backup or the rehearsal fails, the service is restored unchanged. This takes time and free Docker storage.
 

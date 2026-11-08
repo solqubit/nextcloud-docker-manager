@@ -48,6 +48,13 @@ class FixtureManager:
         with (self.state.path / 'ui-calls.jsonl').open('a') as out:
             out.write(json.dumps({'action': action, **kwargs}) + '\n')
 
+    def running(self):
+        """Services follow the last Start/Stop recorded by FixtureEngine."""
+        path = self.state.path / 'ui-calls.jsonl'
+        calls = [json.loads(line)['action'] for line in path.read_text().splitlines()] if path.exists() else []
+        engine = [action for action in calls if action in ('engine_start', 'engine_stop')]
+        return not engine or engine[-1] == 'engine_start'
+
     def status(self):
         cfg = self.state.load()
         return {'version': cfg['version'], 'environment': cfg['environment'],
@@ -55,7 +62,7 @@ class FixtureManager:
                 'status': {'installed': cfg['status'] == 'ready', 'maintenance': False, 'needsDbUpgrade': False},
                 'operation': self.state.pending,
                 'support': self.catalog.support_status(cfg['version']),
-                'services': [dict(Service=role, State='running', Health='healthy', Ports='8080->80/tcp' if role == 'proxy' else '')
+                'services': [dict(Service=role, State='running' if self.running() else 'exited', Health='healthy', Ports='8080->80/tcp' if role == 'proxy' else '')
                              for role in ('app', 'db', 'redis', 'proxy', 'cron')]}
 
     def install(self, version, **settings):
@@ -174,6 +181,12 @@ class FixtureManager:
         self.record('maintenance')
         return {'errors': ['Cron needs review'] if (self.state.path / 'fail-checks').exists() else [],
                 'status': {'installed': True}, 'updates': self.checks()}
+
+    def wait_certificate(self, name):
+        return True
+
+    def cleanup_candidates(self):
+        return {'volumes': [], 'revisions': []}
 
     def schedule_enabled(self):
         return False

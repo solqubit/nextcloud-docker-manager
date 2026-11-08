@@ -126,6 +126,59 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(local(ui, 'uno / one'), 'uno')
 
 
+class DatabaseSupportTests(unittest.TestCase):
+    def manager(self, branches, accepted=('10.11', '11.4', '11.8')):
+        from ndm.operations import Manager
+        manager = Manager.__new__(Manager)
+        manager.catalog = types.SimpleNamespace(
+            maintained_databases=lambda: {'source': 'fixture', 'branches': branches},
+            requirements=lambda major: {'mariadb': list(accepted)})
+        return manager
+
+    def test_supported_branch_offers_nothing(self):
+        cfg = configuration()
+        support = self.manager({'11.4': '2099-01-01', '11.8': '2099-06-01'}).database_support(cfg)
+        self.assertEqual((support['state'], support['choices']), ('supported', []))
+
+    def test_ending_and_ended_branches_offer_newer_accepted_lts_only(self):
+        import datetime as dt
+        cfg = configuration()
+        soon = (dt.date.today() + dt.timedelta(days=30)).isoformat()
+        support = self.manager({'10.11': soon, '11.4': soon, '11.8': '2099-06-01', '12.3': '2099-12-01'}).database_support(cfg)
+        self.assertEqual(support['state'], 'ending')
+        # 12.3 is maintained but not accepted by this Nextcloud; 10.11 is older.
+        self.assertEqual([choice['series'] for choice in support['choices']], ['11.8'])
+        ended = self.manager({'11.8': '2099-06-01'}).database_support(cfg)
+        self.assertEqual((ended['state'], ended['community_until']), ('eol', None))
+        self.assertEqual([choice['series'] for choice in ended['choices']], ['11.8'])
+
+
+class CleanupTests(unittest.TestCase):
+    def test_named_volume_without_options_and_old_revisions_are_removed(self):
+        from ndm.operations import Manager
+        cfg = configuration()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            revisions = root / 'revisions'
+            for index in range(7):
+                (revisions / f'2026110{index}T000000Z-r').mkdir(parents=True)
+            (root / 'current').symlink_to(revisions / '20261106T000000Z-r')
+            manager = Manager.__new__(Manager)
+            manager.state = types.SimpleNamespace(pending=None, path=root, load=lambda: cfg)
+            orphan = cfg['project'] + '_db_lts1a2b3c4d'
+            runner = FakeRunner({'docker volume ls': '\n'.join([*cfg['volumes'].values(), orphan])})
+            engine = types.SimpleNamespace(
+                cfg=cfg, runner=runner, owned=lambda info, kind: None,
+                inspect=lambda kind, name: {'Labels': {}, 'Options': None})
+            with patch('ndm.maintenance.Runner', lambda state: runner), \
+                    patch('ndm.maintenance.Engine', lambda state: engine):
+                result = manager.cleanup(supplied='CLEANUP')
+            self.assertEqual(result['removed_volumes'], [orphan])
+            self.assertEqual(result['removed_revisions'], 2)
+            self.assertEqual(len(list(revisions.iterdir())), 5)
+            self.assertIn(['docker', 'volume', 'rm', orphan], runner.calls)
+
+
 class BootstrapTests(unittest.TestCase):
     def test_derivatives_and_rebuilds_use_their_upstream_repository(self):
         self.assertEqual(system.family({'ID': 'linuxmint', 'ID_LIKE': 'ubuntu debian'}, 'ubuntu', 'debian'), 'ubuntu')

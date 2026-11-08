@@ -62,6 +62,13 @@ def update_rows(ui, cfg, available):
         if isinstance(item, dict) and item.get('image_changed'):
             rows.append(('component:' + role, [(f'{SERVICES[role]} {item["current"]} → {item["available"]}', ''),
                                                ('  ' + ui.t('updates_tag_component'), 'dim>')], ''))
+    # Only offered when the installed LTS is near or past its end of Community support.
+    database = available.get('database') or {}
+    if database.get('state') in ('ending', 'eol'):
+        for choice in database.get('choices', []):
+            rows.append(('lts:' + choice['series'],
+                         [(f'MariaDB {database["current"]} → {choice["series"]} LTS', 'warning'),
+                          ('  ' + ui.t('updates_tag_lts', choice['community_until'][:7]), 'dim>')], ''))
     return rows
 
 

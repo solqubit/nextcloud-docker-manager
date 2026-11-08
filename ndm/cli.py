@@ -84,9 +84,11 @@ def parser():
     child = sub.add_parser('update-component')
     child.add_argument('component', choices=['db', 'redis', 'proxy'])
     child.add_argument('--confirm')
-    child = sub.add_parser('migrate-db', help='Only when the next Nextcloud major requires a new MariaDB LTS')
+    child = sub.add_parser('migrate-db', help='When the next Nextcloud major requires it, or the current MariaDB LTS is near or past its end of support')
     child.add_argument('--target', required=True, help='MariaDB LTS series, for example 11.8')
-    child.add_argument('--for-nextcloud', required=True, help='Exact Nextcloud upgrade requiring the change')
+    child.add_argument('--for-nextcloud', help='Exact Nextcloud upgrade requiring the change; omit for an end-of-support change')
+    child.add_argument('--confirm')
+    child = sub.add_parser('cleanup', help='Remove volumes and old revisions this installation no longer uses')
     child.add_argument('--confirm')
     child = sub.add_parser('self-update')
     child.add_argument('--source')
@@ -135,7 +137,11 @@ def dispatch(manager, args):
         manager.add_domain(args.host, mode=args.mode, tls='internal' if args.local_https else 'off',
                            email=args.email, primary=args.primary, publish_direct=args.publish_direct,
                            external_port=args.external_port, supplied=args.confirm)
-        return {'access': access_url(state.load(), next(e for e in state.load()['domains'] if e['host'] == host(args.host)))}
+        result = {'access': access_url(state.load(), next(e for e in state.load()['domains'] if e['host'] == host(args.host)))}
+        if args.mode != 'local':
+            # A redirect alone does not prove HTTPS works; report whether the certificate exists.
+            result['certificate'] = 'issued' if manager.wait_certificate(host(args.host)) else 'pending'
+        return result
     if command == 'domain-remove':
         return manager.remove_domain(args.host, args.confirm)
     if command in ('domain-primary', 'network'):
@@ -171,6 +177,8 @@ def dispatch(manager, args):
         return manager.update_component(args.component, args.confirm)
     if command == 'migrate-db':
         return manager.migrate_database(args.target, for_nextcloud=args.for_nextcloud, supplied=args.confirm)
+    if command == 'cleanup':
+        return manager.cleanup(args.confirm)
     if command == 'self-update':
         return manager.self_update(args.source, args.confirm)
     raise Error('Unknown command')
@@ -184,7 +192,7 @@ def main(argv=None):
     try:
         if os.name != 'posix':
             raise Error('Run this installer on Linux. Use a Linux Docker runner for Windows tests.')
-        state = State(args.state_dir).open()
+        state = State(args.state_dir).open(allow_busy=args.command == 'maintenance')
         interactive = args.command in (None, 'menu')
         visual = interactive or sys.stdin.isatty() and sys.stdout.isatty()
         startup_language = os.environ.pop('NDM_STARTUP_LANGUAGE', None)

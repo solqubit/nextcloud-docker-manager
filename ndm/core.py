@@ -139,8 +139,11 @@ class State:
             raise Error('Invalid state path / Ruta de estado inválida')
         self.log = None
         self.lock_file = None
+        self.locked = False
 
-    def open(self):
+    def open(self, allow_busy=False):
+        """allow_busy lets read-only work (the scheduled health check) run while an
+        interactive session holds the lock; `locked` then stays False."""
         import fcntl
         if self.path.exists():
             names = {p.name for p in self.path.iterdir()}
@@ -162,8 +165,11 @@ class State:
         self.lock_file = (self.path / 'manager.lock').open('a')
         try:
             fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.locked = True
         except BlockingIOError as exc:
-            raise Error('Otra operación está en ejecución / Another operation is running') from exc
+            if not allow_busy:
+                raise Error('Otra operación está en ejecución / Another operation is running') from exc
+            self.locked = False
         self.log = self.path / 'logs' / f'{stamp()}-{secrets.token_hex(3)}.log'
         self.log.touch(mode=0o600)
         return self

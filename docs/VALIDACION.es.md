@@ -19,7 +19,7 @@
 | Restauración | SQL/aplicación en volúmenes nuevos; documentos y comparticiones conservados |
 | Fallos | Configuración revertida, ensayo fallido bloquea el despliegue, importación SQL interrumpida recuperable y diagnósticos conservados |
 | Persistencia | Carpetas Linux con bind, generaciones anteriores conservadas y arranque bloqueado si falta la ruta de datos |
-| Gestor y cron | Gestor instalado independiente, bloqueo de operaciones simultáneas, diagnóstico, exportación de imagen y conectividad de cron |
+| Gestor y cron | Gestor instalado independiente, bloqueo de operaciones simultáneas, diagnóstico y conectividad de cron |
 | Aislamiento | Sin salida externa en el ensayo; limpieza de sus recursos y contenedores previos conservados |
 
 Se usaron MariaDB 11.4.12/11.4.13/11.8.9, Redis 7.4.12 y Caddy 2.11.7. La pasada completa terminó con `FULL DOCKER ACCEPTANCE COMPLETE`.
@@ -58,6 +58,10 @@ Comprobaciones adicionales, con el ejecutor ya construido:
 docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.sock ndm-test-runner:local python3 tests/proxy_routes.py
 docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.sock ndm-test-runner:local python3 tests/cron_network.py
 ```
+
+## Pendiente con Docker
+
+Cubierto solo por pruebas unitarias: aviso y cambio de LTS por fin de soporte de MariaDB, elección de la LTS en instalaciones nuevas, **Liberar espacio**, espera del certificado al añadir un dominio público, **Iniciar/Detener** según el estado y comprobación diaria con el menú abierto.
 
 ## Pendiente en la VM
 
