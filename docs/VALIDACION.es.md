@@ -59,9 +59,9 @@ docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.
 docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.sock ndm-test-runner:local python3 tests/cron_network.py
 ```
 
-## Pendiente con Docker
+## Validado con Docker (noviembre de 2026)
 
-Cubierto solo por pruebas unitarias: aviso y cambio de LTS por fin de soporte de MariaDB, elección de la LTS en instalaciones nuevas, **Liberar espacio**, espera del certificado al añadir un dominio público, **Iniciar/Detener** según el estado y comprobación diaria con el menú abierto.
+Instalación con la última versión de Nextcloud y la MariaDB LTS más reciente que admite; cambio de LTS solo cuando Nextcloud lo exige; puesta a punto de la base tras actualizar (índices, columnas, claves y reparaciones, en el ensayo y en la real) e integridad del código; actualización de aplicaciones de la tienda con respaldo previo; **Liberar espacio** con imágenes, volúmenes y revisiones antiguas; espera del certificado al añadir un dominio público; **Iniciar/Detener** según el estado; comprobación diaria con el menú abierto. Sin probar: emisión del certificado con un dominio real.
 
 ## Pendiente en la VM
 

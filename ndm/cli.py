@@ -30,7 +30,6 @@ def parser():
     sub.add_parser('menu')
     install = sub.add_parser('install')
     install.add_argument('--nextcloud-version')
-    install.add_argument('--database', help='MariaDB LTS series, for example 11.8; default: newest supported LTS accepted by Nextcloud')
     install.add_argument('--environment', choices=['lan', 'vps'], default='lan')
     install.add_argument('--address', default='127.0.0.1')
     install.add_argument('--bind', default='127.0.0.1')
@@ -85,9 +84,11 @@ def parser():
     child = sub.add_parser('update-component')
     child.add_argument('component', choices=['db', 'redis', 'proxy'])
     child.add_argument('--confirm')
-    child = sub.add_parser('migrate-db', help='When the next Nextcloud major requires it, or the current MariaDB LTS is near or past its end of support')
+    child = sub.add_parser('migrate-db', help='Only when the next Nextcloud major requires a new MariaDB LTS')
     child.add_argument('--target', required=True, help='MariaDB LTS series, for example 11.8')
-    child.add_argument('--for-nextcloud', help='Exact Nextcloud upgrade requiring the change; omit for an end-of-support change')
+    child.add_argument('--for-nextcloud', required=True, help='Exact Nextcloud upgrade requiring the change')
+    child.add_argument('--confirm')
+    child = sub.add_parser('update-apps', help='Update Nextcloud store apps after a verified backup')
     child.add_argument('--confirm')
     child = sub.add_parser('cleanup', help='Remove volumes and old revisions this installation no longer uses')
     child.add_argument('--confirm')
@@ -111,7 +112,7 @@ def dispatch(manager, args):
     command = args.command
     state = manager.state
     if command == 'install':
-        return manager.install(args.nextcloud_version, supplied=args.confirm, database_series=args.database,
+        return manager.install(args.nextcloud_version, supplied=args.confirm,
             **{key: getattr(args, key) for key in ('environment', 'address', 'bind', 'http_port', 'https_port', 'timezone', 'storage', 'storage_root')},
             language=args.lang or remembered_language(state) or 'es')
     if not state.configured:
@@ -178,6 +179,8 @@ def dispatch(manager, args):
         return manager.update_component(args.component, args.confirm)
     if command == 'migrate-db':
         return manager.migrate_database(args.target, for_nextcloud=args.for_nextcloud, supplied=args.confirm)
+    if command == 'update-apps':
+        return manager.update_apps(args.confirm)
     if command == 'cleanup':
         return manager.cleanup(args.confirm)
     if command == 'self-update':

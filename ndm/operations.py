@@ -221,7 +221,7 @@ class Manager(Maintenance, DatabaseMigration):
         engine.stop('app', 'proxy')
         return engine
 
-    def finish(self):
+    def finish(self, tune=False):
         """Keep the proxy gate closed while disabling maintenance and checking SQL."""
         engine = Engine(self.state)
         if not engine.cfg['maintenance_gate']:
@@ -229,6 +229,10 @@ class Manager(Maintenance, DatabaseMigration):
         engine.up('db', 'redis', 'app', 'proxy')
         self.wait_migration(engine)
         engine.occ('maintenance:mode', '--off')
+        if tune:
+            # Apps must be loaded to declare their indices, so this runs after maintenance
+            # mode ends; the closed proxy gate still keeps users out.
+            self.tune_database(engine)
         engine.verify(configure_cron=True)
         gated_revision = (self.state.path / 'current').resolve()
         if self.state.pending:
@@ -250,6 +254,16 @@ class Manager(Maintenance, DatabaseMigration):
         engine.cfg['status'] = 'ready'
         self.state.activate(self.state.revision(engine.cfg))
         return engine
+
+    @staticmethod
+    def tune_database(engine):
+        """Post-upgrade steps from the Nextcloud upgrade manual. Their duration depends on
+        the number of files known to the database, never on the size of the documents."""
+        with stage('Completar índices, columnas y claves de la base / Complete database indices, columns and keys'):
+            for command in ('db:add-missing-indices', 'db:add-missing-columns', 'db:add-missing-primary-keys'):
+                engine.occ(command, timeout=7200)
+        with stage('Reparaciones posteriores a la actualización / Post-upgrade repairs'):
+            engine.occ('maintenance:repair', '--include-expensive', timeout=7200)
 
     @staticmethod
     def wait_migration(engine, timeout=900):
@@ -379,7 +393,15 @@ class Manager(Maintenance, DatabaseMigration):
                 'patches': patches, 'next_major': next_major,
                 'refreshed_image': ref != cfg['images']['app'],
                 'branches': [v for v in branches if self.catalog.support_status(v)['state'] in ('supported', 'ending')],
-                'components': components, 'database': self.database_support_or_unknown(cfg)}
+                'components': components, 'database': self.database_support_or_unknown(cfg),
+                'apps': self.app_updates_or_none()}
+
+    def app_updates_or_none(self):
+        # The app store being unreachable must not hide the other updates.
+        try:
+            return self.app_updates(Engine(self.state))
+        except (Error, OSError, ValueError):
+            return []
 
     def database_support_or_unknown(self, cfg):
         # mariadb.org being unreachable must not hide Nextcloud and component updates.
@@ -388,7 +410,7 @@ class Manager(Maintenance, DatabaseMigration):
         except (Error, OSError, ValueError) as exc:
             return {'state': 'unknown', 'choices': [], 'error': str(exc)}
 
-    def rehearse(self, path, target, app_image=None, db_image=None, components=None):
+    def rehearse(self, path, target, app_image=None, db_image=None, components=None, tune=False):
         """Actual SQL + application clone, excluding all user files and external networking."""
         identity = secrets.token_hex(8)
         temporary = self.state.path / 'cache' / ('rehearsal-' + identity)
@@ -431,6 +453,8 @@ class Manager(Maintenance, DatabaseMigration):
                 engine.up('app', 'proxy')
                 self.wait_migration(engine)
                 engine.occ('maintenance:mode', '--off')
+                if tune:
+                    self.tune_database(engine)
                 engine.verify()
                 enabled = json.loads(engine.occ('app:list', '--output=json').stdout)['enabled']
                 disabled = set(manifest.get('enabled_apps', {})) - set(enabled)
@@ -529,7 +553,7 @@ class Manager(Maintenance, DatabaseMigration):
                 backup = archive.create(stopped, 'pre-update')
                 self.state.phase('backed-up', backup=str(backup))
             with stage('Ensayar SQL y aplicación sin archivos de usuarios / Rehearse SQL without user files'):
-                self.rehearse(backup, target, image)
+                self.rehearse(backup, target, image, tune=True)
             self.state.phase('rehearsed', backup=str(backup))
         revision = self.state.revision(changed)
         new = Engine(self.state, changed, revision)
@@ -538,10 +562,12 @@ class Manager(Maintenance, DatabaseMigration):
         self.state.activate(revision)
         new.put_managed()
         with stage('Aplicar y verificar / Apply and verify'):
-            self.finish()
+            self.finish(tune=True)
         self.state.done()
         self.prune_backups()
-        return backup
+        with stage('Comprobar integridad del código / Check code integrity'):
+            integrity = Engine(self.state).occ('integrity:check-core', check=False, timeout=900)
+        return {'version': target, 'backup': str(backup), 'core_integrity_ok': integrity.returncode == 0}
 
     def restore(self, path, *, supplied=None, accept_user_files=False, recovery=False):
         current = self.state.load()
@@ -638,7 +664,8 @@ class Manager(Maintenance, DatabaseMigration):
             time.sleep(3)
         if engine.status().get('needsDbUpgrade'):
             engine.occ('upgrade', '--no-interaction', timeout=1800)
-        self.finish()
+        # A resumed Nextcloud upgrade still needs its post-upgrade steps.
+        self.finish(tune=operation['action'] in ('update', 'migrate'))
         self.state.done()
 
     def prune_backups(self):

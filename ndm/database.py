@@ -36,9 +36,8 @@ class DatabaseMigration:
                 for index, name in enumerate(names)]
 
     def database_support(self, cfg=None):
-        """MariaDB Community support of the installed LTS. Nothing changes by itself:
-        an ending or ended branch is kept while Nextcloud accepts it, and the next
-        maintained LTS accepted by the current Nextcloud is only offered."""
+        """MariaDB Community support of the installed LTS, for information only: the
+        branch is kept while Nextcloud accepts it and changes only when Nextcloud requires it."""
         cfg = cfg or self.state.load()
         current = series(cfg['images']['db'])
         policy = self.catalog.maintained_databases()
@@ -76,22 +75,13 @@ class DatabaseMigration:
     def migrate_database(self, target, *, for_nextcloud=None, supplied=None):
         original = self.ready()
         cfg = original.cfg
-        if for_nextcloud:
-            # Required by the next Nextcloud major.
-            choices = self.database_choices(for_nextcloud)
-            if not choices['required']:
-                raise Error('La MariaDB actual ya cumple los requisitos; no se permite cambiar de LTS / Current MariaDB already meets the requested Nextcloud requirements; LTS change is not permitted')
-            if self.catalog.patches(version_tuple(cfg['version'])[0])[0] != cfg['version']:
-                raise Error('Aplica primero el último parche de la rama actual / Install the latest patch of the current Nextcloud major before preparing its upgrade')
-            nextcloud_image = self.catalog.resolve('nextcloud', for_nextcloud + '-apache')
-        else:
-            # Offered when the installed LTS is near or past the end of Community support.
-            choices = self.database_support(cfg)
-            if choices['state'] == 'supported':
-                until = choices['community_until']
-                raise Error(f'MariaDB {choices["current"]} tiene soporte hasta {until}; no hace falta cambiar de LTS / '
-                            f'MariaDB {choices["current"]} is supported until {until}; no LTS change is needed')
-            nextcloud_image = None
+        # Only when the next Nextcloud major requires it: an accepted branch is always kept.
+        choices = self.database_choices(for_nextcloud)
+        if not choices['required']:
+            raise Error('La MariaDB actual ya cumple los requisitos; no se permite cambiar de LTS / Current MariaDB already meets the requested Nextcloud requirements; LTS change is not permitted')
+        if self.catalog.patches(version_tuple(cfg['version'])[0])[0] != cfg['version']:
+            raise Error('Aplica primero el último parche de la rama actual / Install the latest patch of the current Nextcloud major before preparing its upgrade')
+        nextcloud_image = self.catalog.resolve('nextcloud', for_nextcloud + '-apache')
         if target not in [entry['series'] for entry in choices['choices']]:
             raise Error('Elige una LTS posterior compatible con ambas versiones de Nextcloud / Choose a later maintained LTS compatible with the current and requested Nextcloud versions')
         image = self.catalog.resolve('mariadb', self.catalog.latest('mariadb', target))

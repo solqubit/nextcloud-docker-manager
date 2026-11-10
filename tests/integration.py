@@ -193,7 +193,9 @@ class Suite:
 
     def update(self):
         original_db = self.engine.cfg['images']['db']
-        path = self.manager.update('33.0.10', supplied='UPDATE-33.0.10')
+        result = self.manager.update('33.0.10', supplied='UPDATE-33.0.10')
+        assert result['core_integrity_ok'], result
+        path = result['backup']
         self.engine = Engine(self.state)
         assert self.engine.status()['versionstring'] == '33.0.10'
         with archive.unpack(self.state, path) as (work, manifest):

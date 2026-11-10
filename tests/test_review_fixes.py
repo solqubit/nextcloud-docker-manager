@@ -179,6 +179,49 @@ class CleanupTests(unittest.TestCase):
             self.assertIn(['docker', 'volume', 'rm', orphan], runner.calls)
 
 
+class AppUpdateTests(unittest.TestCase):
+    def test_store_updates_are_read_from_nextcloud(self):
+        from ndm.operations import Manager
+        output = 'calendar new version available: 5.0.4\ndeck new version available: 1.14.2\nNothing else\n'
+        engine = types.SimpleNamespace(occ=lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, output, ''))
+        self.assertEqual(Manager.app_updates(engine), [{'app': 'calendar', 'version': '5.0.4'},
+                                                       {'app': 'deck', 'version': '1.14.2'}])
+
+    def test_app_updates_appear_as_one_row(self):
+        from ndm.i18n import messages
+        ui = types.SimpleNamespace(msg=messages('es'))
+        ui.t = lambda key, *values: ui.msg.get(key, key) % values if values else ui.msg.get(key, key)
+        rows = update_rows(ui, {'version': '33.0.9'}, {'apps': [{'app': 'calendar', 'version': '5.0.4'}]})
+        self.assertEqual(rows[0][0], 'apps')
+        self.assertIn('1 aplicaciones: calendar', rows[0][1][0][0])
+
+
+class ImageCleanupTests(unittest.TestCase):
+    def test_only_images_from_earlier_revisions_are_removed(self):
+        from ndm.operations import Manager
+        cfg = configuration()
+        old = dict(cfg['images'], app='nextcloud:33.0.8-apache@sha256:' + 'b' * 64)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name, images in (('20261101T000000Z-a', old), ('20261102T000000Z-b', cfg['images'])):
+                (root / 'revisions' / name).mkdir(parents=True)
+                (root / 'revisions' / name / 'config.json').write_text(json.dumps({'images': images}))
+            (root / 'current').symlink_to(root / 'revisions' / '20261102T000000Z-b')
+            manager = Manager.__new__(Manager)
+            manager.state = types.SimpleNamespace(pending=None, path=root, load=lambda: cfg)
+            replies = {'docker volume ls': ''}
+            replies.update({f'docker image inspect --format {{{{.Id}}}} {ref}': 'sha256:current\n' for ref in cfg['images'].values()})
+            replies[f'docker image inspect --format {{{{.Id}}}} {old["app"]}'] = 'sha256:old\n'
+            runner = FakeRunner(replies)
+            engine = types.SimpleNamespace(cfg=cfg, runner=runner)
+            with patch('ndm.maintenance.Runner', lambda state: runner), \
+                    patch('ndm.maintenance.Engine', lambda state: engine):
+                self.assertEqual(manager.cleanup_candidates()['images'], [old['app']])
+                result = manager.cleanup(supplied='CLEANUP')
+            self.assertEqual(result['removed_images'], [old['app']])
+            self.assertIn(['docker', 'image', 'rm', 'nextcloud@sha256:' + 'b' * 64], runner.calls)
+
+
 class BootstrapTests(unittest.TestCase):
     def test_derivatives_and_rebuilds_use_their_upstream_repository(self):
         self.assertEqual(system.family({'ID': 'linuxmint', 'ID_LIKE': 'ubuntu debian'}, 'ubuntu', 'debian'), 'ubuntu')

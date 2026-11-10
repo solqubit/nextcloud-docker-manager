@@ -41,9 +41,7 @@ class WorkflowTests(unittest.TestCase):
 
     def wizard(self, ui):
         ui.send(b'\r', 'Entorno de instalación')
-        ui.send(b'\x1bOB\r', 'mantenimiento oficial')
-        ui.capture('01-version-picker')
-        ui.send(b'\r', 'Configuración inicial')
+        ui.send(b'\x1bOB\r', 'Configuración inicial')
 
     def test_wizard_accepts_edit_highlights_busy_port_and_cancels_without_install(self):
         ui = self.launch('empty')
@@ -52,12 +50,12 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('02-install-form')
         self.assertNotIn('Revisar configuración', '\n'.join(ui.screen.display))
         self.assertIn('Instalar Nextcloud', '\n'.join(ui.screen.display))
-        ui.select(5, 'Puerto HTTP entre')
+        ui.select(3, 'Puerto HTTP entre')
         ui.send(b'\x158088\r', 'actualizado en el formulario')
         output = ui.send(b'\x1bOF\x1bOA\r', 'Puerto ocupado por otro contenedor')
         self.assertIn(b'\x1b[31m', output)
         ui.capture('03-busy-port')
-        ui.select(5, 'Puerto HTTP entre')
+        ui.select(3, 'Puerto HTTP entre')
         ui.send(b'\x1518880\r', 'actualizado en el formulario')
         ui.capture('04-install-ready')
         ui.send(b'\x1bOF\x1bOA\r', 'Confirmar instalación')
@@ -104,7 +102,7 @@ class WorkflowTests(unittest.TestCase):
     def test_timezone_picker_draft_and_discard_are_keyboard_only(self):
         ui = self.launch('empty')
         self.wizard(ui)
-        ui.select(7, 'Zona horaria: región')
+        ui.select(5, 'Zona horaria: región')
         ui.send(b'America\r', 'Zona horaria: ciudad')
         ui.send(b'Guayaquil\r', 'actualizado en el formulario')
         ui.capture('09-timezone-selected')
@@ -356,9 +354,8 @@ class WorkflowTests(unittest.TestCase):
     def test_english_wizard_and_named_storage_hide_unused_folder(self):
         ui = self.launch('empty-english')
         ui.send(b'\r', 'Installation environment')
-        ui.send(b'\x1bOB\r', 'officially maintained')
-        ui.send(b'\r', 'Initial configuration')
-        ui.select(8, 'Storage')
+        ui.send(b'\x1bOB\r', 'Initial configuration')
+        ui.select(6, 'Storage')
         ui.send(b'\x1bOB\r', 'updated in the form')
         self.assertNotIn('Data folder', '\n'.join(ui.screen.display))
         ui.capture('28-english-form')
@@ -451,33 +448,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(any((ui.state / 'backups').glob('*.ndm.tar')))
         self.assertIn('Todavía no hay respaldos', '\n'.join(ui.screen.display))
 
-    def test_install_form_offers_supported_mariadb_branches(self):
+    def test_fresh_install_uses_latest_nextcloud_and_newest_supported_mariadb(self):
         ui = self.launch('empty')
         self.wizard(ui)
-        self.assertIn('MariaDB 12.3 LTS', '\n'.join(ui.screen.display))
-        ui.select(1, 'Rama LTS de MariaDB')
         shown = '\n'.join(ui.screen.display)
-        self.assertIn('Recomendada', shown)
-        self.assertIn('MariaDB 11.8 LTS', shown)
-        ui.capture('38-mariadb-branches')
-        ui.send(b'\x1bOB\r', 'actualizado en el formulario')
-        self.assertIn('MariaDB 11.8 LTS', '\n'.join(ui.screen.display))
+        # Only the latest maintained release and its newest LTS: nothing to choose.
+        self.assertIn('Nextcloud 35.0.2 · MariaDB 12.3 LTS', shown)
+        self.assertNotIn('34.0.5', shown)
+        ui.capture('32-latest-release')
         ui.send(b'\x1bOF\x1bOA\r', 'Confirmar instalación')
         self.accept(ui, 'crea las credenciales')
-        self.assertEqual(self.calls(ui)[0]['database_series'], '11.8')
-
-    def test_fresh_install_shows_recommended_and_previous_with_support_dates(self):
-        ui = self.launch('empty')
-        ui.send(b'\r', 'Entorno de instalación')
-        ui.send(b'\r', 'mantenimiento oficial')
-        shown = '\n'.join(ui.screen.display)
-        self.assertIn('35.0.2', shown)
-        self.assertIn('Recomendada', shown)
-        self.assertIn('34.0.5', shown)
-        self.assertIn('Anterior', shown)
-        self.assertNotIn('33.0.10', shown)
-        self.assertNotIn('32.0.15', shown)
-        ui.capture('32-supported-versions')
+        self.assertEqual((self.calls(ui)[0]['version'], self.calls(ui)[0]['database_series']), ('35.0.2', '12.3'))
 
     def test_obsolete_installation_is_marked_on_dashboard_and_status(self):
         ui = self.launch('obsolete')

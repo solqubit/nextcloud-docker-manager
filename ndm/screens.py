@@ -19,7 +19,7 @@ from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
 from .system import host_info
 from .terminal_ui import INFO, SEPARATOR, Terminal
-from .views import (SERVICES, backup_rows, database_rows, domain_actions, domain_summary, operation_summary, pair, release_rows,
+from .views import (SERVICES, backup_rows, domain_actions, domain_summary, operation_summary, pair,
                     result_rows, support_summary, update_rows)
 
 
@@ -32,14 +32,10 @@ def folder(value):
 
 class Form:
     """In-memory drafts. Escape never writes configuration or changes services."""
-    def __init__(self, console, title, data, fields, *, installed=False, versions=(), releases=(), submit=None,
-                 databases=(), database_lookup=None):
+    def __init__(self, console, title, data, fields, *, installed=False, submit=None):
         self.view, self.ui, self.title = console, console.term, title
-        # MariaDB LTS branches for the chosen Nextcloud; refreshed when the version changes.
-        self.databases, self.database_lookup = list(databases), database_lookup
         self.data, self.original = copy.deepcopy(data), copy.deepcopy(data)
-        self._fields, self.installed, self.versions = fields, installed, versions
-        self.releases = releases
+        self._fields, self.installed = fields, installed
         self.submit = submit
         self.selected, self.invalid = 0, ''
         self.notice, self.notice_style = self.ui.t('install_form_intro' if submit == 'install' else 'form_intro'), 'accent'
@@ -51,16 +47,12 @@ class Form:
 
     def display(self, key, value=None):
         value = self.data[key] if value is None else value
-        if key == 'database':
-            return f'MariaDB {value} LTS'
         if key in ('environment', 'storage', 'publish'):
             return self.ui.t(('environment_' + value) if key == 'environment' else
                              ('yes' if value else 'no') if key == 'publish' else value)
         return str(value) if value != '' else self.ui.t('optional' if key == 'email' else 'pending_value')
 
     def normalize(self, key, value):
-        if key == 'database' and self.databases and value not in [entry['series'] for entry in self.databases]:
-            raise Error(self.ui.t('database_unavailable'))
         if key.endswith('_port'):
             return port(value)
         if key == 'bind':
@@ -143,15 +135,6 @@ class Form:
             value = self.view.pick(key, [(v, self.display(key, v), 'warning' if key == 'publish' and v else '')
                                         for v in values], selected=values.index(data[key]),
                                    help_text=self.ui.t('environment_help') if key == 'environment' else '')
-        elif key == 'version':
-            value = self.view.pick(key, release_rows(self.ui, self.releases) if self.releases else
-                                   [(v, 'Nextcloud ' + v, '') for v in self.versions],
-                                   selected=self.versions.index(data[key]))
-        elif key == 'database':
-            names = [entry['series'] for entry in self.databases]
-            value = self.view.pick('database_branch', database_rows(self.ui, self.databases),
-                                   selected=names.index(data[key]) if data[key] in names else 0,
-                                   notice=self.ui.t('database_help'))
         elif key == 'timezone':
             value = self.timezone()
         elif key in ('bind', 'address'):
@@ -181,13 +164,6 @@ class Form:
             self.data[key] = value
             self.invalid = ''
             self.notice, self.notice_style = self.ui.t('field_saved', self.ui.t(key)), 'ok'
-            if key == 'version' and self.database_lookup:
-                # Each Nextcloud version accepts its own MariaDB branches.
-                self.databases = self.view.run('lookup_databases', lambda: self.database_lookup(value))
-                names = [entry['series'] for entry in self.databases]
-                if self.data.get('database') not in names:
-                    self.data['database'] = names[0]
-                    self.notice, self.notice_style = self.ui.t('database_reset', names[0]), 'warning'
             if key == 'environment' and value == 'vps' and (data.get('bind'), data.get('address')) != ('127.0.0.1',) * 2:
                 self.data.update(bind='127.0.0.1', address='127.0.0.1')
                 self.notice = self.ui.t('vps_loopback_set')
@@ -327,20 +303,17 @@ class Controller:
         environment = self.pick('environment', ('lan', 'vps'), help_text=self.term.t('environment_help'))
         if environment is None:
             return
-        releases = self.view.run('lookup_versions', self.manager.catalog.installation_options)
-        versions = [release['version'] for release in releases]
-        version = self.view.pick('version', release_rows(self.term, releases),
-                                 notice=self.term.t('version_help'))
-        if version is None:
-            return
+        # Always the latest maintained Nextcloud, with the newest supported MariaDB LTS it accepts.
+        # Later updates follow its branch (patches) and move to new branches (majors).
+        version = self.view.run('lookup_versions', self.manager.catalog.installation_options)[0]['version']
         databases = self.view.run('lookup_databases', lambda: self.manager.database_options(version))
         info = host_info()
         address = info['address'] if environment == 'lan' else '127.0.0.1'
         data = dict(version=version, database=databases[0]['series'], environment=environment, bind=address,
                     address=address, http_port=DEFAULT_HTTP_PORT,
                     https_port=DEFAULT_HTTPS_PORT, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
-        form = Form(self.view, 'configure', data, tuple(data), versions=versions, releases=releases, submit='install',
-                    databases=databases, database_lookup=self.manager.database_options)
+        fields = tuple(key for key in data if key not in ('version', 'database'))
+        form = Form(self.view, 'configure', data, fields, submit='install')
         if info['panel_detected']:
             form.notice, form.notice_style = self.term.t('ports_existing'), 'warning'
         while True:
@@ -597,8 +570,8 @@ class Controller:
                 kind = key.partition(':')[0]
                 if kind == 'major' and available.get('patches'):
                     return self.term.t('major_needs_patch')
-                if kind == 'lts':
-                    return self.term.t('lts_change_help')
+                if kind == 'apps':
+                    return self.term.t('apps_help')
                 return self.term.t('components_help' if kind == 'component' else 'updates_help')
             choice = self.menu('updates', rows, notice=notice, notice_style=tone, help_text=describe)
             if choice is None:
@@ -608,9 +581,8 @@ class Controller:
 
     def apply_update(self, choice, cfg, available):
         kind, _, target = choice.partition(':')
-        if kind == 'lts':
-            return self.perform('lts_change', lambda: self.manager.migrate_database(target),
-                                context=[('MariaDB', available['database']['current'] + ' → ' + target + ' LTS')])
+        if kind == 'apps':
+            return self.perform('apps_update', self.manager.update_apps)
         if kind == 'component':
             return self.perform('components', lambda: self.manager.update_component(target),
                                 context=[(SERVICES[target], available['components'][target]['available'])])
@@ -742,9 +714,10 @@ class Controller:
             return self.perform(action, self.manager.setup_check)
         if action == 'cleanup':
             found = self.view.run('cleanup', self.manager.cleanup_candidates)
-            if not found['volumes'] and not found['revisions']:
+            if not found['volumes'] and not found['revisions'] and not found['images']:
                 return self.report('cleanup', self.term.t('cleanup_nothing'), style='accent')
             rows = [(INFO, 'Docker volume · ' + name, '') for name in found['volumes']]
+            rows += [(INFO, 'Docker image · ' + ref.split('@', 1)[0], '') for ref in found['images']]
             if found['revisions']:
                 rows.append((INFO, self.term.t('cleanup_revisions', len(found['revisions'])), ''))
             rows += [(SEPARATOR, '', ''), ('back', '← ' + self.term.t('cancel'), 'accent'),

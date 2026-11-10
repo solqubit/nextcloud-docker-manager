@@ -54,6 +54,44 @@ class Maintenance:
         self.prune_backups()
         return {'component': component, 'version': tag, 'backup': str(path)}
 
+    @staticmethod
+    def app_updates(engine):
+        """Store apps with a newer compatible release, as reported by Nextcloud itself."""
+        output = engine.occ('app:update', '--showonly', check=False, timeout=300).stdout
+        updates = []
+        for line in output.splitlines():
+            name, marker, version = line.partition(' new version available: ')
+            if marker and name.strip():
+                updates.append({'app': name.strip(), 'version': version.strip()})
+        return updates
+
+    def update_apps(self, supplied=None):
+        """Store app updates cannot be rehearsed (the clone has no network), so a verified
+        backup comes first and the closed proxy gate keeps users out until verification."""
+        live = self.ready()
+        apps = self.app_updates(live)
+        if not apps:
+            raise Error('No hay actualizaciones de aplicaciones / No app updates available')
+        confirm('UPDATE-APPS', supplied, ', '.join(f'{item["app"]} {item["version"]}' for item in apps))
+        archive.preflight(live)
+        self.state.begin('apps-update', source=str((self.state.path / 'current').resolve()))
+        with self.reopen_on_failure():
+            backup = archive.create(self.quiesce(), 'pre-update')
+        self.state.phase('applying', backup=str(backup))
+        engine = Engine(self.state)
+        engine.up('db', 'redis', 'app')
+        self.wait_migration(engine)
+        # Apps update with Nextcloud running, as from its web interface; the proxy gate
+        # and the stopped cron keep users and jobs out until finish() verifies everything.
+        engine.occ('maintenance:mode', '--off')
+        engine.occ('app:update', '--all', timeout=1800)
+        if engine.status().get('needsDbUpgrade'):
+            engine.occ('upgrade', '--no-interaction', timeout=1800)
+        self.finish(tune=True)
+        self.state.done()
+        self.prune_backups()
+        return {'apps': [f'{item["app"]} {item["version"]}' for item in apps], 'backup': str(backup)}
+
     def swap_component(self, component, changed, tag):
         """Redis (cache without persistence) and Caddy (proxy) never touch SQL: replace only
         that container, online, and return to the previous image if verification fails."""
@@ -113,13 +151,15 @@ class Maintenance:
             def database():
                 support = self.database_support(engine.cfg)
                 result['database'] = support
-                newest = (' → ' + support['choices'][-1]['series']) if support['choices'] else ''
+                # Information only: the branch changes when a Nextcloud upgrade requires it.
+                current = support['current']
                 if support['state'] == 'eol':
-                    result['errors'].append(f'MariaDB {support["current"]} ya no tiene soporte; cambia de LTS en Actualizaciones{newest} / '
-                                            f'MariaDB {support["current"]} is out of support; change LTS in Updates{newest}')
+                    result['warnings'].append(f'MariaDB {current} terminó su soporte; se cambiará de LTS cuando Nextcloud lo exija / '
+                                              f'MariaDB {current} is out of support; the LTS changes when Nextcloud requires it')
                 elif support['state'] == 'ending':
-                    result['warnings'].append(f'El soporte de MariaDB {support["current"]} termina el {support["community_until"]}{newest} / '
-                                              f'MariaDB {support["current"]} support ends on {support["community_until"]}{newest}')
+                    until = support['community_until']
+                    result['warnings'].append(f'El soporte de MariaDB {current} termina el {until}; se cambiará de LTS cuando Nextcloud lo exija / '
+                                              f'MariaDB {current} support ends on {until}; the LTS changes when Nextcloud requires it')
 
             def backup():
                 if not self.state.locked:
@@ -144,7 +184,21 @@ class Maintenance:
             def certificates():
                 result['certificates'] = self.check_certificates(engine)
 
-            for function in (service, updates, database, backup, cron, certificates):
+            def integrity():
+                ok = engine.occ('integrity:check-core', check=False, timeout=900).returncode == 0
+                result['core_integrity_ok'] = ok
+                if not ok:
+                    result['warnings'].append('La integridad del código tiene avisos; consulta «Lista de archivos inválidos» en Nextcloud / '
+                                              'Code integrity has warnings; see «List of invalid files» in Nextcloud')
+
+            def apps():
+                updates = self.app_updates(engine)
+                result['app_updates'] = [f'{item["app"]} {item["version"]}' for item in updates]
+                if updates:
+                    result['warnings'].append(f'{len(updates)} aplicaciones con actualización en Actualizaciones / '
+                                              f'{len(updates)} apps can be updated in Updates')
+
+            for function in (service, updates, database, backup, cron, certificates, integrity, apps):
                 check(function)
         else:
             result['errors'].append('Nextcloud está detenido o falta la instalación web / Nextcloud is stopped or web installation is pending')
@@ -172,8 +226,9 @@ class Maintenance:
             time.sleep(5)
 
     def cleanup_candidates(self):
-        """Volumes this installation no longer uses (left by restores and LTS changes) and
-        configuration revisions older than the five newest. Never the active ones."""
+        """Volumes this installation no longer uses (left by restores and LTS changes),
+        Docker images earlier revisions used (left by updates) and configuration revisions
+        older than the five newest. Never the active ones."""
         if self.state.pending:
             raise Error('Hay una operación pendiente: usa Recuperar / Pending operation: use recover')
         cfg = self.state.load()
@@ -185,13 +240,28 @@ class Maintenance:
         revisions = sorted(path for path in (self.state.path / 'revisions').iterdir()
                            if path.is_dir() and not path.is_symlink())
         old = [path for path in revisions[:-5] if path != current]
-        return {'volumes': volumes, 'revisions': [path.name for path in old]}
+        # Only images this installation pulled itself, as recorded by its revisions.
+        used = set()
+        for path in revisions:
+            try:
+                used.update(json.loads((path / 'config.json').read_text(encoding='utf-8'))['images'].values())
+            except (OSError, ValueError, KeyError, AttributeError):
+                continue
+        active = set(cfg['images'].values())
+        active_ids = {runner.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref], check=False).stdout.strip()
+                      for ref in active}
+        images = []
+        for ref in sorted(used - active):
+            found = runner.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref], check=False)
+            if found.returncode == 0 and found.stdout.strip() not in active_ids:
+                images.append(ref)
+        return {'volumes': volumes, 'revisions': [path.name for path in old], 'images': images}
 
     def cleanup(self, supplied=None):
         found = self.cleanup_candidates()
-        if not found['volumes'] and not found['revisions']:
-            return {'removed_volumes': [], 'removed_revisions': 0}
-        confirm('CLEANUP', supplied, ', '.join(found['volumes']))
+        if not found['volumes'] and not found['revisions'] and not found['images']:
+            return {'removed_volumes': [], 'removed_revisions': 0, 'removed_images': []}
+        confirm('CLEANUP', supplied, ', '.join(found['volumes'] + found['images']))
         engine = Engine(self.state)
         root = Path(engine.cfg['storage_root']) / engine.cfg['id']
         active = {engine.volume_path(role).resolve() for role in engine.cfg['volumes']} if engine.cfg['storage'] == 'directory' else set()
@@ -214,7 +284,16 @@ class Maintenance:
                     shutil.rmtree(folder)
         for name in found['revisions']:
             shutil.rmtree(self.state.path / 'revisions' / name)
-        return {'removed_volumes': removed, 'removed_revisions': len(found['revisions']), 'in_use': kept}
+        images = []
+        for ref in found['images']:
+            # repo@sha256:digest; Docker refuses while any container still uses the image.
+            reference = ref.split(':', 1)[0] + '@' + ref.split('@', 1)[1]
+            if engine.runner.run(['docker', 'image', 'rm', reference], check=False, timeout=300).returncode:
+                kept.append(ref)
+            else:
+                images.append(ref)
+        return {'removed_volumes': removed, 'removed_revisions': len(found['revisions']),
+                'removed_images': images, 'in_use': kept}
 
     @staticmethod
     def read_certificates(engine):

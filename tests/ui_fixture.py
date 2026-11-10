@@ -191,7 +191,7 @@ class FixtureManager:
         return True
 
     def cleanup_candidates(self):
-        return {'volumes': [], 'revisions': []}
+        return {'volumes': [], 'revisions': [], 'images': []}
 
     def schedule_enabled(self):
         return False

@@ -23,7 +23,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh --lang en
 ```
 
-1. Choose local server or VPS, version, IP, ports and data directory. The latest and previous officially maintained majors are offered. The default ports are 80/443.
+1. Choose local server or VPS, IP, ports and data directory. The latest Nextcloud is installed with the newest MariaDB LTS it supports. The default ports are 80/443.
 2. Open the displayed local URL and create the administrator in the web installer.
 3. The manager automatically completes initial verification before backups, Nextcloud or component updates, and configuration changes, provided the administrator already exists. **Check web installation** remains available to run it directly. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
 4. Add a domain when you want external access.
@@ -72,11 +72,12 @@ Backups contain SQL, application state and certificates. **They exclude `data/<i
 
 Use **Accounts → Reset password** on the main menu to select an account and enter a new password twice. The current password cannot be displayed. The manager does not log the new password; server-side encryption requires Nextcloud's specific recovery process to retain access to encrypted files. Restoring SQL also restores the passwords that existed in that backup.
 
-- **Nextcloud:** patches within the same branch; consecutive major versions, starting from the current branch's latest patch.
-- **MariaDB:** when installing you choose the LTS branch among those still supported and accepted by that Nextcloud version; the newest is recommended (`install --database 11.8` on the command line). An existing installation keeps its branch even after its support ends, while Nextcloud accepts it. An LTS change is offered in **Updates** when Nextcloud requires it or when 180 days or fewer remain before end of support, and it is never applied by itself.
+- **Nextcloud:** patches within its branch and, when a new branch is released, the move to it (consecutive majors, starting from the current branch's latest patch). Once there, you receive its patches. After every update it completes database indices, columns and keys, runs the recommended repairs (first in the rehearsal) and checks code integrity.
+- **Store apps:** the daily check and **Updates** list those with a new version; they are updated after a verified backup while users are kept out.
+- **MariaDB:** the newest supported LTS that Nextcloud accepts is installed. It receives patches for its branch and changes LTS only when a new Nextcloud version requires it, migrating SQL to a new volume (documents are neither copied nor backed up). The daily check reports when its end of support approaches.
 - **Redis and Caddy:** replaced without maintenance mode, with a cut of about one second while Caddy restarts (no backup or rehearsal, since they never touch the database) and reverted if they fail.
-- **Health checks:** services, cron, certificates, space, official support, available updates and the latest backup's integrity. Warns near end of support and marks expired branches as obsolete. It also warns about MariaDB end of support. The daily schedule (a systemd timer) never applies updates, exits with an error when it finds problems and runs even while the menu is open (it then skips backup verification).
-- **Free up space:** removes, after confirmation, volumes left by restores and LTS changes and old configuration revisions (the five newest are kept). Data in use and backups are untouched.
+- **Health checks:** services, cron, certificates, space, official support, available updates and the latest backup's integrity. Warns near end of support and marks expired branches as obsolete. It also warns about MariaDB end of support. The daily schedule (a systemd timer) never applies updates, exits with an error when it finds problems and runs even while the menu is open (it then skips backup verification). It also checks code integrity and apps with updates.
+- **Free up space:** removes, after confirmation, Docker images of earlier versions, volumes left by restores and LTS changes and old configuration revisions (the five newest are kept). Data in use and backups are untouched.
 
 **Updates** shows patches, the next major, image refresh and components on one screen. Before updating, free space is checked while Nextcloud is online; then the manager enables maintenance, backs up SQL/application state, and rehearses the change with actual SQL in isolated containers without documents. If the backup or the rehearsal fails, the service is restored unchanged. This takes time and free Docker storage.
 

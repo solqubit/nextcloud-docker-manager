@@ -58,17 +58,15 @@ def update_rows(ui, cfg, available):
     if available.get('refreshed_image'):
         rows.append(('refresh', [(ui.t('updates_refresh_label', current), 'accent'),
                                  ('  ' + ui.t('updates_tag_refresh'), 'dim>')], ''))
+    apps = available.get('apps') or []
+    if apps:
+        names = ', '.join(item['app'] for item in apps)
+        rows.append(('apps', [(ui.t('updates_apps', len(apps), names), 'accent'),
+                              ('  ' + ui.t('updates_tag_apps'), 'dim>')], ''))
     for role, item in (available.get('components') or {}).items():
         if isinstance(item, dict) and item.get('image_changed'):
             rows.append(('component:' + role, [(f'{SERVICES[role]} {item["current"]} → {item["available"]}', ''),
                                                ('  ' + ui.t('updates_tag_component'), 'dim>')], ''))
-    # Only offered when the installed LTS is near or past its end of Community support.
-    database = available.get('database') or {}
-    if database.get('state') in ('ending', 'eol'):
-        for choice in database.get('choices', []):
-            rows.append(('lts:' + choice['series'],
-                         [(f'MariaDB {database["current"]} → {choice["series"]} LTS', 'warning'),
-                          ('  ' + ui.t('updates_tag_lts', choice['community_until'][:7]), 'dim>')], ''))
     return rows
 
 
@@ -108,15 +106,6 @@ def release_rows(ui, releases):
         label = f'Nextcloud {version} · {ui.t("release_" + release["recommendation"])} · {ui.t("release_until", until)}'
         result.append((version, label, 'ok' if release['recommendation'] == 'latest' else 'accent'))
     return result
-
-
-def database_rows(ui, options):
-    rows = []
-    for option in options:
-        label = (f'MariaDB {option["series"]} LTS · {ui.t("release_" + option["recommendation"])} · '
-                 f'{ui.t("release_until", option["community_until"][:7])}')
-        rows.append((option['series'], label, 'ok' if option['recommendation'] == 'latest' else 'accent'))
-    return rows
 
 
 def pair(ui, label, value, tone='accent', width=76):
