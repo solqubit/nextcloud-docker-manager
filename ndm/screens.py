@@ -17,9 +17,9 @@ from .core import Cancelled, Error, human
 from .dashboard import dashboard
 from .docker import Engine
 from .i18n import messages, remember_language, remembered_language
-from .system import host_info
+from .system import host_info, host_timezone
 from .terminal_ui import INFO, SEPARATOR, Terminal
-from .views import (SERVICES, backup_rows, domain_actions, domain_summary, operation_summary, pair,
+from .views import (SERVICES, backup_rows, domain_actions, domain_summary, operation_summary, pair, release_rows,
                     result_rows, support_summary, update_rows)
 
 
@@ -32,8 +32,11 @@ def folder(value):
 
 class Form:
     """In-memory drafts. Escape never writes configuration or changes services."""
-    def __init__(self, console, title, data, fields, *, installed=False, submit=None):
+    def __init__(self, console, title, data, fields, *, installed=False, submit=None, latest=None, version_check=None):
         self.view, self.ui, self.title = console, console.term, title
+        # The recommended release, plus any exact maintained version typed by hand
+        # (useful to demonstrate updates); version_check returns its MariaDB options.
+        self.latest, self.version_check = latest, version_check
         self.data, self.original = copy.deepcopy(data), copy.deepcopy(data)
         self._fields, self.installed = fields, installed
         self.submit = submit
@@ -135,6 +138,10 @@ class Form:
             value = self.view.pick(key, [(v, self.display(key, v), 'warning' if key == 'publish' and v else '')
                                         for v in values], selected=values.index(data[key]),
                                    help_text=self.ui.t('environment_help') if key == 'environment' else '')
+        elif key == 'version':
+            value, databases = self.choose_version()
+            if value is not None:
+                self.data['database'] = databases[0]['series']
         elif key == 'timezone':
             value = self.timezone()
         elif key in ('bind', 'address'):
@@ -167,6 +174,23 @@ class Form:
             if key == 'environment' and value == 'vps' and (data.get('bind'), data.get('address')) != ('127.0.0.1',) * 2:
                 self.data.update(bind='127.0.0.1', address='127.0.0.1')
                 self.notice = self.ui.t('vps_loopback_set')
+
+    def choose_version(self):
+        choice = self.view.pick('version', release_rows(self.ui, [self.latest]) +
+                                [('manual', self.ui.t('manual_version'), 'accent')],
+                                help_text=self.ui.t('field_help_version'))
+        if choice is None:
+            return None, None
+        checked = {}
+        def check(text):
+            text = text.strip()
+            if text not in checked:
+                checked[text] = self.version_check(text)
+            return text
+        if choice == 'manual':
+            value = self.view.edit('version', self.data['version'], check, hint=self.ui.t('field_help_version'))
+            return (value, checked[value]) if value is not None else (None, None)
+        return choice, self.view.run('lookup_databases', lambda: self.version_check(choice))
 
     def field_help(self, key):
         if key in self.fields:
@@ -305,15 +329,17 @@ class Controller:
             return
         # Always the latest maintained Nextcloud, with the newest supported MariaDB LTS it accepts.
         # Later updates follow its branch (patches) and move to new branches (majors).
-        version = self.view.run('lookup_versions', self.manager.catalog.installation_options)[0]['version']
+        latest = self.view.run('lookup_versions', self.manager.catalog.installation_options)[0]
+        version = latest['version']
         databases = self.view.run('lookup_databases', lambda: self.manager.database_options(version))
         info = host_info()
         address = info['address'] if environment == 'lan' else '127.0.0.1'
         data = dict(version=version, database=databases[0]['series'], environment=environment, bind=address,
                     address=address, http_port=DEFAULT_HTTP_PORT,
-                    https_port=DEFAULT_HTTPS_PORT, timezone='UTC', storage='directory', storage_root=str(self.state.path / 'data'))
-        fields = tuple(key for key in data if key not in ('version', 'database'))
-        form = Form(self.view, 'configure', data, fields, submit='install')
+                    https_port=DEFAULT_HTTPS_PORT, timezone=host_timezone(), storage='directory', storage_root=str(self.state.path / 'data'))
+        fields = tuple(key for key in data if key != 'database')
+        form = Form(self.view, 'configure', data, fields, submit='install', latest=latest,
+                    version_check=self.manager.check_version)
         if info['panel_detected']:
             form.notice, form.notice_style = self.term.t('ports_existing'), 'warning'
         while True:

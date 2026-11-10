@@ -141,7 +141,7 @@
   "install_confirm_title": "Confirmar instalación",
   "install_now": "Instalar ahora",
   "install_confirm_help": "Instalar ahora inicia la instalación. Cancelar o Esc vuelve al formulario.",
-  "install_form_intro": "Se instala la última versión de Nextcloud con la MariaDB LTS más reciente que admite (arriba). Edita los campos que necesites; «Instalar Nextcloud» abre la confirmación final.",
+  "install_form_intro": "Se instala la última versión de Nextcloud con la MariaDB LTS más reciente que admite (arriba); en el primer campo puedes indicar otra versión. Edita lo que necesites; «Instalar Nextcloud» abre la confirmación final.",
   "install_submit_help": "Continúa a la confirmación final; todavía puedes volver y modificar los valores.",
   "install_cancelled": "Instalación cancelada. Puedes modificar los valores o salir del formulario.",
   "confirm_docker": "Instalar Docker Engine y Compose desde el repositorio oficial.",
@@ -408,5 +408,7 @@
   "apps_help": "Se hace un respaldo verificado y se actualizan las aplicaciones de la tienda con los usuarios fuera; después se completan la base y las reparaciones.",
   "apps_update": "Actualizar aplicaciones",
   "apps": "Aplicaciones",
-  "app_updates": "Aplicaciones con actualización"
+  "app_updates": "Aplicaciones con actualización",
+  "manual_version": "Escribir otra versión…",
+  "field_help_version": "Versión exacta X.Y.Z con mantenimiento oficial. Útil para instalar una anterior y mostrar cómo se actualiza."
 }

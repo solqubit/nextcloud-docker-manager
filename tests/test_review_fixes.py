@@ -179,6 +179,26 @@ class CleanupTests(unittest.TestCase):
             self.assertIn(['docker', 'volume', 'rm', orphan], runner.calls)
 
 
+class PhoneRegionTests(unittest.TestCase):
+    def test_region_follows_the_timezone_country(self):
+        import base64
+        from ndm.config import managed_php, phone_region
+        if phone_region('America/Guayaquil') is None:
+            self.skipTest('System tzdata without zone.tab')
+        self.assertEqual(phone_region('America/Guayaquil'), 'EC')
+        self.assertEqual(phone_region('Europe/Madrid'), 'ES')
+        self.assertIsNone(phone_region('UTC'))
+
+        def settings(timezone):
+            cfg = dict(configuration(), timezone=timezone)
+            payload = managed_php(cfg).split("base64_decode('")[1].split("'")[0]
+            return json.loads(base64.b64decode(payload))
+
+        self.assertEqual(settings('America/Mexico_City')['default_phone_region'], 'MX')
+        # Without a country Nextcloud keeps its own warning instead of a wrong region.
+        self.assertNotIn('default_phone_region', settings('UTC'))
+
+
 class AppUpdateTests(unittest.TestCase):
     def test_store_updates_are_read_from_nextcloud(self):
         from ndm.operations import Manager

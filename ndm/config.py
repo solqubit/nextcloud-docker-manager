@@ -8,6 +8,7 @@ import re
 import secrets
 import shlex
 from pathlib import Path
+import zoneinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .core import Error, LABEL, version_tuple
@@ -142,6 +143,21 @@ def prefer_first_public(cfg, mode):
             and not any(entry['kind'] == 'public' for entry in cfg['domains']))
 
 
+def phone_region(timezone):
+    """ISO 3166 country of a timezone from the system tzdata table (zone.tab), e.g.
+    America/Guayaquil -> EC. None for UTC, zones without a country or no table."""
+    for folder in (*zoneinfo.TZPATH, '/usr/share/zoneinfo'):
+        table = Path(folder) / 'zone.tab'
+        if not table.is_file():
+            continue
+        for line in table.read_text(encoding='utf-8', errors='replace').splitlines():
+            parts = line.split('\t')
+            if not line.startswith('#') and len(parts) >= 3 and parts[2] == timezone:
+                return parts[0] if re.fullmatch('[A-Z]{2}', parts[0]) else None
+        return None
+    return None
+
+
 def access_url(cfg, entry=None):
     entry = entry or next(e for e in cfg['domains'] if e['host'] == cfg['primary'])
     secure = entry['tls'] != 'off'
@@ -159,8 +175,11 @@ def managed_php(cfg, *, rehearsal=False):
             'memcache.locking': '\\OC\\Memcache\\Redis',
             'redis': {'host': 'redis', 'port': 6379, 'password': cfg['redis_password']},
             'log_type': 'file', 'logfile': '/var/www/html/data/nextcloud.log',
-            'log_rotate_size': 20 * 1024 * 1024, 'maintenance_window_start': 6,
-            'default_phone_region': 'EC'}
+            'log_rotate_size': 20 * 1024 * 1024, 'maintenance_window_start': 6}
+    # Phone numbers without a prefix belong to the country of the chosen timezone.
+    region = phone_region(cfg['timezone'])
+    if region:
+        data['default_phone_region'] = region
     if rehearsal:
         data.update(appstoreenabled=False, mail_smtpmode='null')
     encoded = base64.b64encode(json.dumps(data).encode()).decode()

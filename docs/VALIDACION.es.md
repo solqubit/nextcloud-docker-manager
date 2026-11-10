@@ -61,7 +61,7 @@ docker run --rm -v "$PWD:/workspace:ro" -v /var/run/docker.sock:/var/run/docker.
 
 ## Validado con Docker (noviembre de 2026)
 
-Instalación con la última versión de Nextcloud y la MariaDB LTS más reciente que admite; cambio de LTS solo cuando Nextcloud lo exige; puesta a punto de la base tras actualizar (índices, columnas, claves y reparaciones, en el ensayo y en la real) e integridad del código; actualización de aplicaciones de la tienda con respaldo previo; **Liberar espacio** con imágenes, volúmenes y revisiones antiguas; espera del certificado al añadir un dominio público; **Iniciar/Detener** según el estado; comprobación diaria con el menú abierto. Sin probar: emisión del certificado con un dominio real.
+Instalación con la última versión de Nextcloud y la MariaDB LTS más reciente que admite; cambio de LTS solo cuando Nextcloud lo exige; puesta a punto de la base tras actualizar (índices, columnas, claves y reparaciones, en el ensayo y en la real) e integridad del código; actualización de aplicaciones de la tienda con respaldo previo; **Liberar espacio** con imágenes, volúmenes y revisiones antiguas; espera del certificado al añadir un dominio público; **Iniciar/Detener** según el estado; comprobación diaria con el menú abierto. Versión manual al instalar (por ejemplo 34.0.5 con MariaDB 11.8 y luego actualización a 35.0.2; versiones sin mantenimiento rechazadas en el propio campo); zona horaria del servidor propuesta por defecto y región telefónica deducida de ella (America/Guayaquil → EC; con UTC no se fija). Sin probar: emisión del certificado con un dominio real.
 
 ## Pendiente en la VM
 

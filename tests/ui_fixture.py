@@ -65,7 +65,14 @@ class FixtureManager:
                 'services': [dict(Service=role, State='running' if self.running() else 'exited', Health='healthy', Ports='8080->80/tcp' if role == 'proxy' else '')
                              for role in ('app', 'db', 'redis', 'proxy', 'cron')]}
 
+    def check_version(self, version):
+        if version not in ('35.0.2', '34.0.5'):
+            raise Error('Versión no disponible / Version not available')
+        return self.database_options(version)
+
     def database_options(self, version):
+        if version.startswith('34.'):
+            return [{'series': '11.8', 'community_until': '2030-06-01', 'recommendation': 'latest'}]
         return [{'series': '12.3', 'community_until': '2031-06-01', 'recommendation': 'latest'},
                 {'series': '11.8', 'community_until': '2030-06-01', 'recommendation': 'previous'},
                 {'series': '11.4', 'community_until': '2029-05-29', 'recommendation': 'other'}]

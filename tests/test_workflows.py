@@ -50,12 +50,12 @@ class WorkflowTests(unittest.TestCase):
         ui.capture('02-install-form')
         self.assertNotIn('Revisar configuración', '\n'.join(ui.screen.display))
         self.assertIn('Instalar Nextcloud', '\n'.join(ui.screen.display))
-        ui.select(3, 'Puerto HTTP entre')
+        ui.select(4, 'Puerto HTTP entre')
         ui.send(b'\x158088\r', 'actualizado en el formulario')
         output = ui.send(b'\x1bOF\x1bOA\r', 'Puerto ocupado por otro contenedor')
         self.assertIn(b'\x1b[31m', output)
         ui.capture('03-busy-port')
-        ui.select(3, 'Puerto HTTP entre')
+        ui.select(4, 'Puerto HTTP entre')
         ui.send(b'\x1518880\r', 'actualizado en el formulario')
         ui.capture('04-install-ready')
         ui.send(b'\x1bOF\x1bOA\r', 'Confirmar instalación')
@@ -102,9 +102,11 @@ class WorkflowTests(unittest.TestCase):
     def test_timezone_picker_draft_and_discard_are_keyboard_only(self):
         ui = self.launch('empty')
         self.wizard(ui)
-        ui.select(5, 'Zona horaria: región')
-        ui.send(b'America\r', 'Zona horaria: ciudad')
-        ui.send(b'Guayaquil\r', 'actualizado en el formulario')
+        ui.select(6, 'Zona horaria: región')
+        # The form proposes the server's own timezone, which could match a common
+        # region such as America; Antarctica never does.
+        ui.send(b'Antarctica\r', 'Zona horaria: ciudad')
+        ui.send(b'Troll\r', 'actualizado en el formulario')
         ui.capture('09-timezone-selected')
         ui.send(b'\x1b', '¿Descartar los cambios')
         ui.send(b'\x1b', 'Configuración inicial')
@@ -355,7 +357,7 @@ class WorkflowTests(unittest.TestCase):
         ui = self.launch('empty-english')
         ui.send(b'\r', 'Installation environment')
         ui.send(b'\x1bOB\r', 'Initial configuration')
-        ui.select(6, 'Storage')
+        ui.select(7, 'Storage')
         ui.send(b'\x1bOB\r', 'updated in the form')
         self.assertNotIn('Data folder', '\n'.join(ui.screen.display))
         ui.capture('28-english-form')
@@ -447,6 +449,19 @@ class WorkflowTests(unittest.TestCase):
         self.accept(ui, 'Respaldo eliminado')
         self.assertFalse(any((ui.state / 'backups').glob('*.ndm.tar')))
         self.assertIn('Todavía no hay respaldos', '\n'.join(ui.screen.display))
+
+    def test_manual_version_for_tutorials_installs_that_release(self):
+        ui = self.launch('empty')
+        self.wizard(ui)
+        ui.select(0, 'Escribir otra versión')
+        ui.select(1, 'Versión exacta')
+        ui.send(b'\x1520.0.1\r', 'no disponible')
+        ui.send(b'\x1534.0.5\r', 'actualizado en el formulario')
+        self.assertIn('Nextcloud 34.0.5 · MariaDB 11.8 LTS', '\n'.join(ui.screen.display))
+        ui.capture('39-manual-version')
+        ui.send(b'\x1bOF\x1bOA\r', 'Confirmar instalación')
+        self.accept(ui, 'crea las credenciales')
+        self.assertEqual((self.calls(ui)[0]['version'], self.calls(ui)[0]['database_series']), ('34.0.5', '11.8'))
 
     def test_fresh_install_uses_latest_nextcloud_and_newest_supported_mariadb(self):
         ui = self.launch('empty')

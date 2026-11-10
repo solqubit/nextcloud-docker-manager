@@ -35,7 +35,7 @@ def parser():
     install.add_argument('--bind', default='127.0.0.1')
     install.add_argument('--http-port', type=int, default=DEFAULT_HTTP_PORT)
     install.add_argument('--https-port', type=int, default=DEFAULT_HTTPS_PORT)
-    install.add_argument('--timezone', default='UTC')
+    install.add_argument('--timezone', help="Default: the server's timezone")
     install.add_argument('--storage', choices=['named', 'directory'], default='directory')
     install.add_argument('--storage-root', default='/opt/nextcloud-docker-manager/data')
     install.add_argument('--confirm')

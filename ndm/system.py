@@ -7,6 +7,8 @@ import shutil
 import socket
 import time
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from .catalog import fetch
 from .core import Error, atomic, confirm
 
@@ -29,6 +31,28 @@ def host_info():
         address = '127.0.0.1'
     return {'os': values, 'architecture': platform.machine(), 'address': address,
             'panel_detected': Path('/usr/local/hestia').exists() or Path('/usr/local/psa').exists()}
+
+
+def host_timezone():
+    """The server's own timezone (/etc/timezone or the /etc/localtime link), else UTC."""
+    names = []
+    try:
+        names.append(Path('/etc/timezone').read_text(encoding='utf-8').strip())
+    except OSError:
+        pass
+    try:
+        link = os.readlink('/etc/localtime')
+        if 'zoneinfo/' in link:
+            names.append(link.split('zoneinfo/', 1)[1])
+    except OSError:
+        pass
+    for name in names:
+        try:
+            ZoneInfo(name)
+            return name
+        except (ValueError, ZoneInfoNotFoundError):
+            continue
+    return 'UTC'
 
 
 def family(info, *names):

@@ -23,7 +23,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh
 ```
 
-1. Elige servidor local o VPS, IP, puertos y carpeta de datos. Se instala la última versión de Nextcloud con la MariaDB LTS más reciente que admite. Los puertos predeterminados son 80/443.
+1. Elige servidor local o VPS, IP, puertos y carpeta de datos. Se instala la última versión de Nextcloud con la MariaDB LTS más reciente que admite. Los puertos predeterminados son 80/443. En el primer campo puedes escribir otra versión exacta con soporte (por ejemplo, una anterior para mostrar cómo se actualiza).
 2. Abre la URL local indicada y crea el administrador en la web de Nextcloud.
 3. El gestor completa automáticamente la verificación inicial al respaldar, actualizar Nextcloud o sus componentes y aplicar configuraciones, siempre que ya hayas creado el administrador. **Comprobar instalación web** sigue disponible para ejecutarla directamente. En instalaciones nuevas con SQL de hasta 64 MiB completa índices y tipos MIME; con bases mayores los deja para mantenimiento planificado.
 4. Añade un dominio cuando quieras acceso externo.

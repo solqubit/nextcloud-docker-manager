@@ -23,7 +23,7 @@ cd nextcloud-docker-manager
 sudo bash start.sh --lang en
 ```
 
-1. Choose local server or VPS, IP, ports and data directory. The latest Nextcloud is installed with the newest MariaDB LTS it supports. The default ports are 80/443.
+1. Choose local server or VPS, IP, ports and data directory. The latest Nextcloud is installed with the newest MariaDB LTS it supports. The default ports are 80/443. The first field accepts another exact supported version (for example, an older one to show how updating works).
 2. Open the displayed local URL and create the administrator in the web installer.
 3. The manager automatically completes initial verification before backups, Nextcloud or component updates, and configuration changes, provided the administrator already exists. **Check web installation** remains available to run it directly. New installations with SQL up to 64 MiB complete indices and MIME repairs; larger databases defer them to planned maintenance.
 4. Add a domain when you want external access.

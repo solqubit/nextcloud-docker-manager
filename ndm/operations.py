@@ -17,6 +17,7 @@ from .catalog import Catalog
 from .config import access_url, compose, host, initial, port, prefer_first_public, public_host, validate
 from .core import Error, Runner, State, atomic, confirm, human, read_json, stage, stamp, version_tuple
 from .docker import Engine
+from .system import host_timezone
 from .maintenance import Maintenance, component_series
 from .database import DatabaseMigration
 
@@ -40,6 +41,14 @@ class Manager(Maintenance, DatabaseMigration):
                 return str(candidate)
         raise Error('No hay una subred privada libre / No private subnet available')
 
+    def check_version(self, version):
+        """A manually typed Nextcloud release: exact, still maintained, with an official
+        image and a supported MariaDB LTS. Returns its MariaDB options, newest first."""
+        version_tuple(version)
+        self.catalog.require_supported(version)
+        self.catalog.resolve('nextcloud', version + '-apache')
+        return self.database_options(version)
+
     def install(self, version=None, *, supplied=None, database_series=None, **settings):
         if self.state.configured:
             raise Error('Ya existe una instalación; usa el menú / Installation already configured')
@@ -62,6 +71,8 @@ class Manager(Maintenance, DatabaseMigration):
             for role, repo, series in (('db', 'mariadb', database_series), ('redis', 'redis', '7.4'), ('proxy', 'caddy', '2')):
                 images[role] = self.catalog.resolve(repo, self.catalog.latest(repo, series))
             required = self.catalog.compatible(version, images['db'])
+        if not settings.get('timezone'):
+            settings['timezone'] = host_timezone()
         cfg = initial(version, images, subnet=self.new_subnet(), **settings)
         bind = ipaddress.ip_address(cfg['bind'])
         if bind.is_unspecified or (cfg['environment'] == 'vps' and not bind.is_loopback):
